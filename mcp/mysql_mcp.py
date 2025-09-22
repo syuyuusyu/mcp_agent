@@ -3,16 +3,18 @@ from app.utils import DbConnectionPool, DbClient
 from typing import Optional, Dict, Any, List
 import os
 from sqlalchemy.sql import text
+import yaml
 
-# 数据库配置
-db_config = {
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "root",
-    "password": "1234",
-    "database": "ai"
-}
-db_pool = DbConnectionPool(db_config)
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+config_path = os.path.join(project_root, "config.yaml")
+with open(config_path, "r") as f:
+    config = yaml.safe_load(f)
+
+datasource = config.get("datasource",{})
+
+
+
+db_pool = DbConnectionPool(datasource)
 db_client = DbClient(db_pool)
 
 @tool("list_databases")
@@ -27,7 +29,7 @@ async def list_tables(database: Optional[str] = None) -> List[str]:
     if database:
         db_client.execute_no_result(f"USE {database}")
     results = db_client.query("SHOW TABLES")
-    return [row[f"Tables_in_{database or db_config['database']}"] for row in results]
+    return [row[f"Tables_in_{database or datasource['database']}"] for row in results]
 
 @tool("describe_table")
 async def describe_table(table: str, database: Optional[str] = None) -> List[Dict[str, str]]:

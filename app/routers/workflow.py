@@ -19,8 +19,9 @@ tool_map = {
     for name in tool_names
     if hasattr(mcp, name) and callable(getattr(mcp, name))
 }
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-config_path = os.path.join(os.path.dirname(__file__), "workflow.yaml")
+config_path = os.path.join(project_root, "workflow.yaml")
 with open(config_path, "r") as f:
     workflow_fonfig = yaml.safe_load(f) or {}
 
@@ -35,14 +36,13 @@ async def upload_file(file: UploadFile = File(...)):
 
     返回 JSON:
     {
-      filename: 原始文件名,
-      saved_as: 实际保存文件名,
-      size: 字节大小,
-      status: success
+        filename: 原始文件名,
+        saved_as: 实际保存文件名,
+        size: 字节大小,
+        status: success
     }
     """
     try:
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         files_dir = os.path.join(project_root, "files")
         os.makedirs(files_dir, exist_ok=True)
 
@@ -98,7 +98,7 @@ async def download_file(file_name: str):
     """
     # 安全处理，去掉路径分隔符
     safe_name = os.path.basename(file_name).replace("..", "_")
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
     files_dir = os.path.join(project_root, "files")
     target_path = os.path.join(files_dir, safe_name)
 
@@ -174,7 +174,7 @@ def _is_flow_finished(payload: Dict[str, Any]) -> bool:
 
 @router.get("/topics")
 async def get_topics():
-    config_path = os.path.join(os.path.dirname(__file__), "workflow.yaml")
+    config_path = os.path.join(project_root, "workflow.yaml")
     with open(config_path, "r") as f:
         workflow_fonfig = yaml.safe_load(f) or {}
 

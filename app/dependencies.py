@@ -3,16 +3,15 @@ import yaml
 from .utils.db_client import DbClient
 from .utils.db_pool import DbConnectionPool
 import os
-from openai import OpenAI
 from langchain_openai import ChatOpenAI
 
-
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 class Container(containers.DeclarativeContainer):
 
     config = providers.Configuration()
 
-    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    config_path = os.path.join(project_root, "config.yaml")
     # 在容器初始化时加载 YAML 文件
     with open(config_path, "r") as f:
         config.from_dict(yaml.safe_load(f))

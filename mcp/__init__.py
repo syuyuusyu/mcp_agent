@@ -8,12 +8,25 @@ from .mysql_mcp import (
 
 from .shell_mcp import execute_shell, get_system_info
 
+from .excel_mcp import (
+    read_sheet_names,
+    read_sheet_data,
+    read_sheet_formula,
+    write_sheet_data,
+)
+
 __all__ = [
     "list_databases",
     "list_tables",
     "describe_table",
     "execute_sql",
     "exec_sql_batch",
+
     "execute_shell",
-    "get_system_info"
+    "get_system_info",
+
+    "read_sheet_names",
+    "read_sheet_data",
+    "read_sheet_formula",
+    "write_sheet_data",
 ]
