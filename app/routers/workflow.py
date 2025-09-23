@@ -2,12 +2,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File,
 from fastapi.responses import FileResponse
 import mimetypes
 import os
-from ..utils import logger,random_string
+from ..utils import logger,random_string,load_config_yaml
+from ..utils.mcp_utils import extract_json_blocks, is_flow_finished, shrink_tool_result
 import yaml
 import mcp
 from typing import List, Dict, Any, Optional,Union
-import re
 import json
+import asyncio
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from dependency_injector.wiring import Provide, inject
@@ -19,13 +20,12 @@ tool_map = {
     for name in tool_names
     if hasattr(mcp, name) and callable(getattr(mcp, name))
 }
+
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-config_path = os.path.join(project_root, "workflow.yaml")
-with open(config_path, "r") as f:
-    workflow_fonfig = yaml.safe_load(f) or {}
+workflow_config = load_config_yaml("workflow.yaml")
 
-topics = workflow_fonfig.get("topics", [])
+topics = workflow_config.get("topics", [])
 
 router = APIRouter()
 
@@ -119,66 +119,13 @@ async def download_file(file_name: str):
 
 
 
-def _extract_json_blocks(text: str) -> List[Dict[str, Any]]:
-    """从模型输出中提取 JSON（兼容 ```json、普通花括号、或完整JSON响应）。"""
-    blocks: List[Dict[str, Any]] = []
-    if not text:
-        return blocks
-    
-    text = text.strip()
-    
-    # 策略1: 尝试直接解析整个文本（模型返回完整JSON的情况）
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            blocks.append(obj)
-            return blocks
-        elif isinstance(obj, list):
-            # 如果是JSON数组，取其中的字典
-            for item in obj:
-                if isinstance(item, dict):
-                    blocks.append(item)
-            if blocks:
-                return blocks
-    except Exception:
-        pass
-    
-    # 策略2: 提取 ```json 代码块
-    code_fenced = re.findall(r"```json\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
-    if code_fenced:
-        candidates = code_fenced
-    else:
-        # 策略3: 回退策略：匹配最外层大括号内容（限制数量避免误匹配）
-        candidates = re.findall(r"\{.*?\}", text, flags=re.DOTALL)[:3]
-    
-    for c in candidates:
-        try:
-            obj = json.loads(c)
-            if isinstance(obj, dict):
-                blocks.append(obj)
-        except Exception:
-            continue
-    return blocks
-
-
-def _is_flow_finished(payload: Dict[str, Any]) -> bool:
-    step = (payload.get("step") or "").lower()
-    step_desc = (payload.get("step_desc") or "").lower()
-    action = (payload.get("action") or "").lower()
-    return any([
-        step in ("done", "finish", "finished"),
-        action in ("end", "done"),
-        "done" in step_desc,
-    ])
-
 
 @router.get("/topics")
 async def get_topics():
-    config_path = os.path.join(project_root, "workflow.yaml")
-    with open(config_path, "r") as f:
-        workflow_fonfig = yaml.safe_load(f) or {}
+    global workflow_config, topics
+    workflow_config = load_config_yaml("workflow.yaml")
 
-    topics = workflow_fonfig.get("topics", [])
+    topics = workflow_config.get("topics", [])
     return [{
         "code": t.get("code", ""),
         "name": t.get("name", ""),
@@ -195,7 +142,7 @@ async def websocket_endpoint(ws: WebSocket,code: str,llm_client = Provide[Contai
     if not topic:
         await ws.close(code=1000)
         return
-    principle = workflow_fonfig.get("principle", "")
+    principle = workflow_config.get("principle", "")
     prompt = topic.get("prompt", "")
     messages: List[Union[HumanMessage, AIMessage, ToolMessage]] = []
     messages.append(HumanMessage(content=principle+"\n\n"+prompt))
@@ -239,9 +186,10 @@ async def websocket_endpoint(ws: WebSocket,code: str,llm_client = Provide[Contai
                     tool_func = tool_map.get(tool_name)
                     try:
                         if tool_func:
-                            toll_result = await tool_func.ainvoke(tool_args)
+                            tool_result = await tool_func.ainvoke(tool_args)
+                            shrunk = shrink_tool_result(tool_result)
                             tool_messages.append(ToolMessage(
-                                content = json.dumps(toll_result, ensure_ascii=False),
+                                content = json.dumps(shrunk, ensure_ascii=False),
                                 tool_call_id = tc.get("id"),
                             ))
                         else:
@@ -261,7 +209,7 @@ async def websocket_endpoint(ws: WebSocket,code: str,llm_client = Provide[Contai
                     continue
             
             # 2) 无新的 tool_calls，解析 JSON 指令
-            payloads = _extract_json_blocks(response.content)
+            payloads = extract_json_blocks(response.content)
             payload = payloads[0] if payloads else {}
 
             if not payload:
@@ -285,7 +233,8 @@ async def websocket_endpoint(ws: WebSocket,code: str,llm_client = Provide[Contai
                 "action": action,
                 "content": content,
             })
-            if action == "done" or _is_flow_finished(payload):
+            if action == "done" or is_flow_finished(payload):
+                await asyncio.sleep(2)
                 await ws.close(code=1000)
                 return
             if action == "user_input":
@@ -306,6 +255,7 @@ async def websocket_endpoint(ws: WebSocket,code: str,llm_client = Provide[Contai
                         "description": description,
                         "content": "用户未确认，流程结束。",
                     })
+                    await asyncio.sleep(2)
                     await ws.close(code=1000)
                     return
                 continue

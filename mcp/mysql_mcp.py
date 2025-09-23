@@ -1,14 +1,10 @@
 from langchain_core.tools import tool
-from app.utils import DbConnectionPool, DbClient
+from app.utils import DbConnectionPool, DbClient,load_config_yaml
 from typing import Optional, Dict, Any, List
-import os
 from sqlalchemy.sql import text
-import yaml
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-config_path = os.path.join(project_root, "config.yaml")
-with open(config_path, "r") as f:
-    config = yaml.safe_load(f)
+
+config = load_config_yaml("config.yaml")
 
 datasource = config.get("datasource",{})
 
