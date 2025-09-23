@@ -116,4 +116,53 @@ Shiv 会在第一次运行时解压到 `~/.shiv/`（默认），缓存命中后�
 | 启动速度 | 快（直接 import） | 首次慢，后续快 |
 | 额外依赖 | 无 | 需要安装 shiv |
 
+## Docker 部署
+
+已提供 `Dockerfile` + `Makefile` 快速构建运行镜像（使用 uv 进行依赖安装，多阶段构建，非 root 运行）。
+
+### 构建
+```
+make build  # 或 docker build -t mcp-agent:latest .
+```
+
+### 运行
+默认应用端口 8002：
+```
+make run PORT=8002 CONFIG_DIR=$(pwd)
+```
+上面命令会把当前目录挂载到容器 `/app/config_ext`，你可以在代码中通过 `APP_CONFIG_DIR=/app/config_ext` 来指向外部配置（若已使用该环境变量机制）。
+
+或手动：
+```
+docker run --rm -p 8002:8002 -e APP_PORT=8002 -e APP_CONFIG_DIR=/app/config_ext -v $(pwd):/app/config_ext mcp-agent:latest --host 0.0.0.0 --port 8002
+```
+
+### 推送到私有仓库
+```
+make push REG=registry.example.com
+```
+
+### 健康检查
+Dockerfile 中自带一个简单的 TCP 端口探测 `HEALTHCHECK`。若需要替换为 HTTP：
+修改 Dockerfile：
+```
+HEALTHCHECK CMD python - <<'PY'
+import urllib.request,sys,os
+url=f"http://127.0.0.1:{os.environ.get('APP_PORT','8002')}/docs"
+try:
+	with urllib.request.urlopen(url,timeout=3) as r:
+		sys.exit(0 if r.status<500 else 1)
+except Exception:
+	sys.exit(1)
+PY
+```
+
+### 常见问题
+| 问题 | 可能原因 | 解决 |
+|------|----------|------|
+| 容器启动后访问不到 | Host 端口没映射或进程未启动 | 检查 `-p` 参数 / 容器日志 |
+| pandas 安装慢 | 缺少缓存 | 镜像构建层缓存会加速第二次构建 |
+| 需要连接数据库超时 | 未配置环境变量 / 网络策略 | 设定正确的 `config.yaml` 外挂目录 |
+
+
 

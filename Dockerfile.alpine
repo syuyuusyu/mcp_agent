@@ -1,0 +1,63 @@
+# Alpine-based multi-stage image (experimental)
+# 注意：包含 numpy / pandas 等需要本地构建，Alpine (musl) 下会比 Debian slim 慢，
+# 有时最终镜像未必更小（编译产物 + openblas 体积）。
+# 若追求稳定/构建速度，仍推荐 python:3.11-slim。
+
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}-alpine AS build
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /app
+
+# 基础编译依赖：构建 C 扩展 (numpy, pandas, multidict, etc.)
+# openblas-dev 供 numpy/pandas 使用；若后续需要 scipy 再补 lapack/fortran.
+RUN apk add --no-cache \
+    build-base \
+    musl-dev \
+    linux-headers \
+    openblas-dev \
+    curl \
+    ca-certificates
+
+# 安装 uv
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock* ./
+# 使用 uv 同步依赖；会在 /root/.venv 下创建虚拟环境
+RUN uv sync --frozen --no-install-project --python ${PYTHON_VERSION}
+
+# 精简虚拟环境：删除 pyc / tests / 缓存
+RUN find /root/.venv -type d -name '__pycache__' -prune -exec rm -rf {} + \
+ && find /root/.venv -type f -name '*.pyc' -delete \
+ && find /root/.venv/lib/python3.11/site-packages -type d \( -name tests -o -name test \) -prune -exec rm -rf {} + || true
+
+COPY app app
+COPY mcp mcp
+COPY main.py .
+
+# ---- runtime ----
+FROM python:${PYTHON_VERSION}-alpine AS runtime
+ENV PYTHONUNBUFFERED=1
+WORKDIR /app
+
+# 运行期只需要运行库（无需编译工具），但要安装运行时依赖 openblas
+RUN apk add --no-cache openblas
+
+COPY --from=build /root/.venv /root/.venv
+COPY --from=build /app /app
+ENV PATH=/root/.venv/bin:$PATH
+
+EXPOSE 8002
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
+
+# 构建：
+#   docker build -f Dockerfile.alpine -t mcp-agent:alpine .
+# 运行：
+#   docker run --rm -p 8002:8002 mcp-agent:alpine
+# 若构建失败（多为 numpy/pandas），可尝试：
+#   1) 清除 uv.lock 重新生成 (uv lock)
+#   2) 确认未锁定与 musl 不兼容的 wheel
+#   3) 添加额外依赖: apk add --no-cache lapack-dev gfortran
