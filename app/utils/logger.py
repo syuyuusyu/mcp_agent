@@ -28,12 +28,6 @@ def setup_logger():
     )
     return loguru_logger
 
-class InterceptHandler22(logging.Handler):
-    def emit(self, record):
-        level = logger.level(record.levelname).name
-        logger.patch(lambda r: r.update(name=record.name, line=record.lineno)).log(
-            level, record.getMessage()
-        )
 class InterceptHandler(logging.Handler):
     def emit(self, record):
         # 动态获取调用者信息

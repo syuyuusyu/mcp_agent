@@ -13,36 +13,59 @@ def random_string(length=10):
     return ''.join(random.choice(characters) for _ in range(length))
 
 def load_config_yaml(file_name: str) -> Dict[str, Any]:
-    """加载 YAML 配置，支持两种情况：
-    1. YAML 文件与 main.py 同级。
-    2. 通过 shiv (.pyz) 打包运行时，YAML 与 .pyz 文件同级。
+    """仅在 uv.lock 所在目录查找 YAML 文件。
 
-    查找顺序：
-    - main 模块 (__main__.__file__) 所在目录
-    - sys.argv[0] (可执行或 .pyz) 所在目录（若不同）
-    - 直接使用传入的绝对/相对路径（如果 file_name 自带路径）
+    规则：
+    - 如果传入的是绝对路径或包含目录的相对路径，则按给定路径读取。
+    - 否则，从 uv.lock 所在目录拼接 file_name 并读取。
 
     返回: 解析后的字典 (空文件返回空字典)
     找不到或解析失败会抛出异常。
     """
     candidates = []
 
-    # 若用户传入了包含路径的 file_name，优先按原样使用
+    # 1) 显式路径（绝对或包含目录的相对路径）
     if os.path.isabs(file_name) or os.path.dirname(file_name):
         candidates.append(file_name)
+    else:
+        # 2) 基于 uv.lock 所在目录
+        # 优先从当前进程工作目录或应用根目录向上查找 uv.lock
+        search_roots = []
+        # a) 当前文件(common.py)推断的项目根
+        this_dir = os.path.dirname(__file__)
+        project_root = os.path.abspath(os.path.join(this_dir, "..", ".."))
+        search_roots.append(project_root)
+        # b) 进程工作目录
+        search_roots.append(os.getcwd())
 
-    # 1) main.py 所在目录
-    main_file = getattr(sys.modules.get('__main__'), '__file__', None)
-    if main_file:
-        main_dir = os.path.abspath(os.path.dirname(main_file))
-        candidates.append(os.path.join(main_dir, file_name))
+        uv_lock_path = None
+        tried_uv_roots = []
+        for root in search_roots:
+            root = os.path.abspath(root)
+            cur = root
+            # 向上查找直到文件系统根
+            while True:
+                candidate = os.path.join(cur, "uv.lock")
+                tried_uv_roots.append(candidate)
+                if os.path.isfile(candidate):
+                    uv_lock_path = candidate
+                    break
+                parent = os.path.dirname(cur)
+                if parent == cur:
+                    break
+                cur = parent
+            if uv_lock_path:
+                break
 
-    # 2) 可执行 / .pyz 所在目录（shiv 运行时 sys.argv[0] 指向 .pyz）
-    exec_path = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else None
-    if exec_path:
-        exec_dir = os.path.dirname(exec_path)
-        if main_file is None or exec_dir != os.path.dirname(main_file):
-            candidates.append(os.path.join(exec_dir, file_name))
+        if not uv_lock_path:
+            raise FileNotFoundError(
+                "uv.lock not found. Required to locate '{}'. Tried: {}".format(
+                    file_name, ", ".join(tried_uv_roots)
+                )
+            )
+
+        config_path = os.path.join(os.path.dirname(uv_lock_path), file_name)
+        candidates.append(config_path)
 
     tried = []
     for path in candidates:
