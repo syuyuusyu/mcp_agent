@@ -4,6 +4,7 @@ import sys
 import os
 import inspect
 import logging
+from .common import load_config_yaml
 
 def setup_logger():
     loguru_logger.remove()
@@ -13,8 +14,8 @@ def setup_logger():
         level="INFO",
         colorize=True
     )
-    log_dir = "/Users/syu/project/ml/med_train/logs"
-    #log_dir = "/home/new/production/log/med_train"
+    config = load_config_yaml("config.yaml")
+    log_dir = config.get("log_dir", "./logs")
     os.makedirs(log_dir, exist_ok=True)
     loguru_logger.add(
         f"{log_dir}/app_{{time:YYYY-MM-DD}}.log",

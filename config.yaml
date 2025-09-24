@@ -1,3 +1,8 @@
+log_dir: /Users/syu/project/ml/ai_chat/mcp_agent/logs
+mcp_model:
+  api_key: sk-fadb6690a1144f16b9212266a4e2d666
+  api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: qwen3-coder-plus
 datasource:
   host: 127.0.0.1
   port: 3306
