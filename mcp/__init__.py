@@ -13,6 +13,8 @@ from .excel_mcp import (
     read_sheet_data,
     read_sheet_formula,
     write_sheet_data,
+    write_sheet_formula,
+    create_excel_file,
 )
 
 __all__ = [
@@ -29,4 +31,6 @@ __all__ = [
     "read_sheet_data",
     "read_sheet_formula",
     "write_sheet_data",
+    "write_sheet_formula",
+    "create_excel_file",
 ]

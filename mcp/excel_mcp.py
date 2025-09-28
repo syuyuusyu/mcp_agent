@@ -92,17 +92,20 @@ def write_sheet_formula(file_name: str, sheetName: str, formulas: list[list[str]
     Returns:
         是否写入成功
     """
-    file_path = os.path.join(files_dir, file_name)
-    workbook = openpyxl.load_workbook(file_path) if os.path.exists(file_path) else openpyxl.Workbook()
-    if sheetName not in workbook.sheetnames:
-        workbook.create_sheet(sheetName)
-    sheet = workbook[sheetName]
-    for i, row in enumerate(formulas):
-        for j, formula in enumerate(row):
-            if formula:
-                sheet.cell(row=i+1, column=j+1, value=formula)
-    workbook.save(file_path)
-    workbook.close()
+    try:
+        file_path = os.path.join(files_dir, file_name)
+        workbook = openpyxl.load_workbook(file_path) if os.path.exists(file_path) else openpyxl.Workbook()
+        if sheetName not in workbook.sheetnames:
+            workbook.create_sheet(sheetName)
+        sheet = workbook[sheetName]
+        for i, row in enumerate(formulas):
+            for j, formula in enumerate(row):
+                if formula:
+                    sheet.cell(row=i+1, column=j+1, value=formula)
+        workbook.save(file_path)
+        workbook.close()
+    except Exception as e:
+        raise ValueError(f"Failed to write formulas to Excel file: {str(e)}")
     return True
 
 @tool("create_excel_file")

@@ -10,3 +10,5 @@ logs/
 
 # Virtual environments
 .venv
+
+config_dev.yaml
