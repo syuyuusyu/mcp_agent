@@ -1,6 +1,6 @@
 log_dir: /Users/syu/project/ml/ai_chat/mcp_agent/logs
 mcp_model:
-  api_key: xxx
+  api_key: sk-91be0fb7bcff47769fd6284527113cb6
   url: https://dashscope.aliyuncs.com/compatible-mode/v1
   model: qwen3-coder-plus
 datasource:
@@ -9,3 +9,9 @@ datasource:
   user: root
   password: '1234'
   database: ai
+
+oss:
+  endpoint: https://www.ufoyy.top:9000
+  access-key: admin
+  secret-key: n7d3t7x7
+  bucket-name: app

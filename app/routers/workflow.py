@@ -9,6 +9,8 @@ import mcp
 from typing import List, Dict, Any, Optional,Union
 import json
 import asyncio
+import re
+import boto3
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from dependency_injector.wiring import Provide, inject
@@ -29,6 +31,17 @@ topics = workflow_config.get("topics", [])
 
 router = APIRouter()
 
+config = load_config_yaml("config.yaml")
+
+oss_config = config.get("oss",{})
+
+s3_client = boto3.client(
+    's3',
+    endpoint_url=oss_config.get("endpoint"),  # MinIO 端点
+    aws_access_key_id=oss_config.get("access-key"),
+    aws_secret_access_key=oss_config.get("secret-key"),
+)
+
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -43,43 +56,30 @@ async def upload_file(file: UploadFile = File(...)):
     }
     """
     try:
-        files_dir = os.path.join(project_root, "files")
-        os.makedirs(files_dir, exist_ok=True)
-
         if file is None:
             raise HTTPException(status_code=400, detail="缺少文件字段 'file'")
-
+        
+        file_content = await file.read()
         original_name = (file.filename or "unnamed").strip() or f"upload_{random_string(8)}"
         safe_name = os.path.basename(original_name).replace("..", "_") or f"upload_{random_string(8)}"
+        safe_name = re.sub(r"\s+", "", safe_name)  # 去掉空格
 
         name_root, ext = os.path.splitext(safe_name)
-        ext_lower = ext.lower()
+        mime_type, _ = mimetypes.guess_type(file.filename)
+        logger.info(f"上传文件: original={original_name} safe_name={safe_name} mime_type={mime_type}")
 
-        # 可选白名单 (为空表示不限制)
-        EXT_WHITELIST: List[str] = []
-        if EXT_WHITELIST and ext_lower not in EXT_WHITELIST:
-            raise HTTPException(status_code=400, detail=f"文件类型不被允许: {ext_lower}")
+        upload = s3_client.put_object(
+            Bucket=oss_config.get("bucket-name"),
+            Key="mcp_file/" + safe_name,
+            Body=file_content,
+            ContentType=mime_type or "application/octet-stream"
+        )
 
-        content = await file.read()
-        MAX_SIZE = 50 * 1024 * 1024  # 50MB
-        if not content:
-            raise HTTPException(status_code=400, detail="空文件")
-        if len(content) > MAX_SIZE:
-            raise HTTPException(status_code=400, detail=f"文件过大，限制 {MAX_SIZE} bytes")
-
-        target_path = os.path.join(files_dir, safe_name)
-        if os.path.exists(target_path):
-            safe_name = f"{name_root}_{random_string(6)}{ext_lower}"
-            target_path = os.path.join(files_dir, safe_name)
-
-        with open(target_path, "wb") as out:
-            out.write(content)
-
-        logger.info(f"保存上传文件: original={original_name} saved_as={safe_name} size={len(content)}")
+        logger.info(f"保存上传文件: original={original_name} saved_as={safe_name} size={len(upload.get('Body',b''))} bytes")
         return {
             "filename": original_name,
             "saved_as": safe_name,
-            "size": len(content),
+            "size": len(upload.get('Body',b'')),
             "status": "success"
         }
     except HTTPException:

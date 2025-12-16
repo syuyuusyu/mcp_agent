@@ -29,10 +29,8 @@ principle: |
   
 topics:
   - code: excel_test
-    name: execl
+    name: execel
     prompt: |
       当前流程用于测试模型处理excel表格的能力。
       在当前程序上下文中有一个excel_mcp程序，程序的具体API会在具体调用的时候告诉你。
-      当前文件系统中有一个现成的excel文件，文件名为 昭市中3月支付宝异常.xlsx, 该文件有2个sheet,每个sheet中有多个订单号。
-      请在读取该文件后，编写一个excel公式用来比对两个sheet中的订单号是否一致，并将结果输出到一个新的sheet中。
-      再将公式写入到文件中后，保存文件，并告诉用户文件的下载路径 http://localhost:8002/workflow/download/{file_name}      
+      在接收到用户上传的excel文件后，读取该文件，文件名为 {file_name} 简单描述下文件内容。  

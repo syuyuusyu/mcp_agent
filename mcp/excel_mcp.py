@@ -4,26 +4,51 @@ import pandas as pd
 import os
 from langchain_core.tools import tool
 from typing import Any
+import boto3
+from app.utils import load_config_yaml
+import io
+
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 files_dir = os.path.join(project_root, "files")
 
+config = load_config_yaml("config.yaml")
+
+oss_config = config.get("oss",{})
+
+s3_client = boto3.client(
+    's3',
+    endpoint_url=oss_config.get("endpoint"),  # MinIO 端点
+    aws_access_key_id=oss_config.get("access-key"),
+    aws_secret_access_key=oss_config.get("secret-key"),
+)
+
+def get_file_stream_from_s3(file_name: str) -> io.BytesIO:
+    """从 S3 获取文件并返回字节流"""
+    try:
+        response = s3_client.get_object(
+            Bucket=oss_config.get("bucket-name"),
+            Key=f"mcp_file/{file_name}"
+        )
+        file_content = response['Body'].read()
+        return io.BytesIO(file_content)
+    except Exception as e:
+        raise ValueError(f"Failed to get file from S3: {str(e)}")
+
 
 @tool("read_sheet_names")
 def read_sheet_names(file_name: str) -> list[str]:
-    """读取 Excel 文件中的所有工作表名称。
-    Args:
-        file_name: Excel 文件名(文件路径由程序本身确定，模型不需要传入路径)
-    Returns:
-        工作表名称列表
-    """
-    file_path = os.path.join(files_dir, file_name)
-    if not os.path.exists(file_path):
-        raise ValueError("File not found")
-    workbook = openpyxl.load_workbook(file_path, data_only=False)
-    sheet_names = workbook.sheetnames
-    workbook.close()
-    return sheet_names
+    """ 读取 Excel 文件的工作表名称"""
+    try:
+        file_stream = get_file_stream_from_s3(file_name)
+        
+        # 用 openpyxl 打开
+        workbook = openpyxl.load_workbook(file_stream, data_only=False)
+        sheet_names = workbook.sheetnames
+        workbook.close()
+        return sheet_names
+    except Exception as e:
+        raise ValueError(f"Failed to read from S3: {str(e)}")
 
 @tool("read_sheet_data")
 def read_sheet_data(file_name: str, sheetName: str) -> list[list]:
@@ -34,11 +59,12 @@ def read_sheet_data(file_name: str, sheetName: str) -> list[list]:
     Returns:
         二维数组形式的数据
     """
-    file_path = os.path.join(files_dir, file_name)
-    if not os.path.exists(file_path):
-        raise ValueError("File not found")
-    df = pd.read_excel(file_path, sheet_name=sheetName)
-    return df.values.tolist()
+    try:
+        file_stream = get_file_stream_from_s3(file_name)
+        df = pd.read_excel(file_stream, sheet_name=sheetName)
+        return df.values.tolist()
+    except Exception as e:
+        raise ValueError(f"Failed to read sheet data: {str(e)}")
 
 @tool("read_sheet_formula")
 def read_sheet_formula(file_name: str, sheetName: str) -> list[list[str]]:
@@ -49,22 +75,23 @@ def read_sheet_formula(file_name: str, sheetName: str) -> list[list[str]]:
     Returns:
         二维数组形式的公式
     """
-    file_path = os.path.join(files_dir, file_name)
-    if not os.path.exists(file_path):
-        raise ValueError("File not found")
-    workbook = openpyxl.load_workbook(file_path, data_only=False)
-    sheet = workbook[sheetName]
-    formulas = []
-    for row in sheet.iter_rows():
-        row_formulas = []
-        for cell in row:
-            if cell.value and str(cell.value).startswith('='):
-                row_formulas.append(cell.value)
-            else:
-                row_formulas.append(None)
-        formulas.append(row_formulas)
-    workbook.close()
-    return formulas
+    try:
+        file_stream = get_file_stream_from_s3(file_name)
+        workbook = openpyxl.load_workbook(file_stream, data_only=False)
+        sheet = workbook[sheetName]
+        formulas = []
+        for row in sheet.iter_rows():
+            row_formulas = []
+            for cell in row:
+                if cell.value and str(cell.value).startswith('='):
+                    row_formulas.append(cell.value)
+                else:
+                    row_formulas.append(None)
+            formulas.append(row_formulas)
+        workbook.close()
+        return formulas
+    except Exception as e:
+        raise ValueError(f"Failed to read sheet formula: {str(e)}")
 
 @tool("write_sheet_data")
 def write_sheet_data(file_name: str, sheetName: str, data: list[list]) -> bool:
@@ -76,11 +103,46 @@ def write_sheet_data(file_name: str, sheetName: str, data: list[list]) -> bool:
     Returns:
         是否写入成功
     """
-    file_path = os.path.join(files_dir, file_name)
-    df = pd.DataFrame(data)
-    with pd.ExcelWriter(file_path, engine='openpyxl', mode='a' if os.path.exists(file_path) else 'w') as writer:
-        df.to_excel(writer, sheet_name=sheetName, index=False, header=False)
-    return True
+    try:
+        # 尝试从 S3 下载现有文件，如果不存在则创建新的
+        try:
+            file_stream = get_file_stream_from_s3(file_name)
+            workbook = openpyxl.load_workbook(file_stream)
+        except:
+            workbook = openpyxl.Workbook()
+        
+        # 创建或获取工作表
+        if sheetName not in workbook.sheetnames:
+            workbook.create_sheet(sheetName)
+        else:
+            # 清空现有数据
+            sheet = workbook[sheetName]
+            for row in sheet.iter_rows():
+                for cell in row:
+                    cell.value = None
+        
+        sheet = workbook[sheetName]
+        
+        # 写入数据
+        for i, row in enumerate(data):
+            for j, value in enumerate(row):
+                sheet.cell(row=i+1, column=j+1, value=value)
+        
+        # 保存到临时流，然后上传到 S3
+        output_stream = io.BytesIO()
+        workbook.save(output_stream)
+        workbook.close()
+        
+        output_stream.seek(0)
+        s3_client.put_object(
+            Bucket=oss_config.get("bucket-name"),
+            Key=f"mcp_file/{file_name}",
+            Body=output_stream.getvalue(),
+            ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        return True
+    except Exception as e:
+        raise ValueError(f"Failed to write sheet data: {str(e)}")
 
 @tool("write_sheet_formula")
 def write_sheet_formula(file_name: str, sheetName: str, formulas: list[list[str]]) -> bool:
@@ -93,20 +155,40 @@ def write_sheet_formula(file_name: str, sheetName: str, formulas: list[list[str]
         是否写入成功
     """
     try:
-        file_path = os.path.join(files_dir, file_name)
-        workbook = openpyxl.load_workbook(file_path) if os.path.exists(file_path) else openpyxl.Workbook()
+        # 尝试从 S3 下载现有文件，如果不存在则创建新的
+        try:
+            file_stream = get_file_stream_from_s3(file_name)
+            workbook = openpyxl.load_workbook(file_stream)
+        except:
+            workbook = openpyxl.Workbook()
+        
+        # 创建或获取工作表
         if sheetName not in workbook.sheetnames:
             workbook.create_sheet(sheetName)
+        
         sheet = workbook[sheetName]
+        
+        # 写入公式
         for i, row in enumerate(formulas):
             for j, formula in enumerate(row):
                 if formula:
                     sheet.cell(row=i+1, column=j+1, value=formula)
-        workbook.save(file_path)
+        
+        # 保存到临时流，然后上传到 S3
+        output_stream = io.BytesIO()
+        workbook.save(output_stream)
         workbook.close()
+        
+        output_stream.seek(0)
+        s3_client.put_object(
+            Bucket=oss_config.get("bucket-name"),
+            Key=f"mcp_file/{file_name}",
+            Body=output_stream.getvalue(),
+            ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        return True
     except Exception as e:
-        raise ValueError(f"Failed to write formulas to Excel file: {str(e)}")
-    return True
+        raise ValueError(f"Failed to write sheet formula: {str(e)}")
 
 @tool("create_excel_file")
 def create_excel_file(file_name: str, title: list[str], data: list[list[Any]]) -> bool:
@@ -118,15 +200,23 @@ def create_excel_file(file_name: str, title: list[str], data: list[list[Any]]) -
     Returns:
         是否创建成功
     """
-    file_path = os.path.join(files_dir, file_name)
     try:
-        # 如果文件已存在，先删除
-        if os.path.exists(file_path):
-            os.remove(file_path)
         # 创建 DataFrame
         df = pd.DataFrame(data, columns=title)
-        # 写入 Excel 文件
-        df.to_excel(file_path, index=False, sheet_name='Sheet1')
+        
+        # 保存到临时流
+        output_stream = io.BytesIO()
+        with pd.ExcelWriter(output_stream, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Sheet1', index=False)
+        
+        # 上传到 S3
+        output_stream.seek(0)
+        s3_client.put_object(
+            Bucket=oss_config.get("bucket-name"),
+            Key=f"mcp_file/{file_name}",
+            Body=output_stream.getvalue(),
+            ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
         return True
     except Exception as e:
         raise ValueError(f"Failed to create Excel file: {str(e)}")
