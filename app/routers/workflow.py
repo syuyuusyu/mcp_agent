@@ -224,6 +224,12 @@ async def websocket_endpoint(ws: WebSocket,code: str,llm_client = Provide[Contai
             description = payload.get("description", "")
             action = payload.get("action", "").lower()
             content = payload.get("content", "")
+
+            if action == "execute_tool":
+                # 调用工具
+                logger.warning("[WARN] 模型返回execute_tool 指令，但未返回tool_calls内容，提示模型修正。")
+                messages.append(HumanMessage(content="在返回action == 'execute_tool'的同时，需要在response.tool_calls中返回需要调用的工具信息，请修正。"))
+                continue
             
             
             await ws.send_json({

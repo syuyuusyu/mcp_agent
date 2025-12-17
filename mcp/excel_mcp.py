@@ -62,7 +62,22 @@ def read_sheet_data(file_name: str, sheetName: str) -> list[list]:
     try:
         file_stream = get_file_stream_from_s3(file_name)
         df = pd.read_excel(file_stream, sheet_name=sheetName)
-        return df.values.tolist()
+        # 将 DataFrame 转换为列表，并处理 Timestamp 对象转换为字符串
+        result = []
+        for row in df.values:
+            converted_row = []
+            for cell in row:
+                # 将 pandas Timestamp 和其他不可序列化的对象转换为字符串
+                if pd.isna(cell):
+                    converted_row.append(None)
+                elif isinstance(cell, pd.Timestamp):
+                    converted_row.append(cell.strftime('%Y-%m-%d %H:%M:%S'))
+                elif isinstance(cell, (pd.Series, dict)):
+                    converted_row.append(str(cell))
+                else:
+                    converted_row.append(cell)
+            result.append(converted_row)
+        return result
     except Exception as e:
         raise ValueError(f"Failed to read sheet data: {str(e)}")
 

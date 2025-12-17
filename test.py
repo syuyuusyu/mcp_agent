@@ -6,7 +6,7 @@ config = load_config_yaml("config.yaml")
 print(config)
 
 async def main():
-    arges = {'file_name': '安宁焦化厂质检日报2025.9.29.xlsx', 'sheetName': '9.29'}
+    arges = {'file_name': 'SYF.xlsx', 'sheetName': 'Sheet1'}
     result = await read_sheet_data.ainvoke(arges)
     print(result)
 

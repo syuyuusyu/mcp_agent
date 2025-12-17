@@ -34,3 +34,12 @@ topics:
       当前流程用于测试模型处理excel表格的能力。
       在当前程序上下文中有一个excel_mcp程序，程序的具体API会在具体调用的时候告诉你。
       在接收到用户上传的excel文件后，读取该文件，文件名为 {file_name} 简单描述下文件内容。  
+      下面是流程图:
+      graph TD
+          Start --> WaitFile{等待用户上传文件}
+          WaitFile -> GetFileName[获取文件名] --> ReadSheetNames[读取工作表名称]
+          ReadSheetNames --> AskSheet{询问用户选择工作表}
+          AskSheet --> ReadSheetData[读取工作表数据] --> ShowData[展示工作表数据预览] --> Done[结束流程]
+          GetFileName -->  Done[结束流程]
+          WaitFile -- 如果用户长时间没有上传文件 --> Done[结束流程]
+          AskSheet -- 如果用户没有选择工作表 --> Done[结束流程]
