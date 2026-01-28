@@ -29,7 +29,6 @@ class McpAgent:
         self.llm_with_tools = llm_client.bind_tools(tools) if tools else llm_client
         self.messages: List[Union[HumanMessage, AIMessage, ToolMessage]] = []
 
-    
     def get_tool_map(self):
         tool_names = getattr(mcp, "__all__", []) 
         tool_map = {
@@ -39,8 +38,6 @@ class McpAgent:
         }
         return tool_map
     
-
-        
     def config_info(self):
         mcp_config = load_config_yaml("mcp.yaml")
         principle = mcp_config.get("principle", "")
