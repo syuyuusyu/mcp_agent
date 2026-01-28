@@ -1,7 +1,7 @@
 from .db_client import DbClient
 from .db_pool import DbConnectionPool
 from .logger import logger, configure_loggers
-from .common import random_string,load_config_yaml
+from .common import random_string,load_config_yaml,repo_root
 
 __all__ = [
     "DbClient",
@@ -10,4 +10,5 @@ __all__ = [
     "configure_loggers",
     "random_string",
     "load_config_yaml",
+    "repo_root",
 ]

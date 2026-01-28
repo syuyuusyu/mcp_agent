@@ -2,14 +2,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .dependencies import Container,set_container
-from .routers import workflow 
-from .routers import register_routers
 from contextlib import asynccontextmanager
 from .utils import logger
 
 
 
 def create_app() -> FastAPI:
+    from .routers import mcp_controller,register_routers
+
     container = Container()
     set_container(container)
 
@@ -24,7 +24,7 @@ def create_app() -> FastAPI:
                     allow_credentials=True, allow_methods=["GET","POST","OPTIONS"], 
                     allow_headers=["*"], )
     # 注入依赖
-    container.wire(modules=[workflow])
+    container.wire(modules=[mcp_controller])
     # 注册路由
     register_routers(app)
     logger.info("Application startup complete.")

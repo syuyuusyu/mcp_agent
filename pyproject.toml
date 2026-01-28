@@ -5,16 +5,19 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "boto3>=1.42.24",
     "dependency-injector>=4.48.2",
     "fastapi>=0.117.1",
-    "langchain-core>=0.3.76",
-    "langchain-openai>=0.3.33",
+    "langchain>=1.2.7",
+    "langchain-core>=1.2.7",
+    "langchain-openai>=1.1.7",
     "loguru>=0.7.3",
     "openpyxl>=3.1.5",
     "pandas>=2.3.2",
     "pymysql>=1.1.2",
     "python-multipart>=0.0.20",
     "pyyaml>=6.0.2",
+    "skillkit>=0.4.0",
     "sqlalchemy>=2.0.43",
     "uvicorn[standard]>=0.36.0",
 ]

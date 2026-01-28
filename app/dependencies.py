@@ -1,9 +1,7 @@
 from dependency_injector import containers, providers
-import yaml
 from .utils.db_client import DbClient
 from .utils.db_pool import DbConnectionPool
 from .utils.common import load_config_yaml
-import os
 from langchain_openai import ChatOpenAI
 
 config_file = load_config_yaml("config.yaml")
@@ -36,7 +34,10 @@ class Container(containers.DeclarativeContainer):
 
 
 _container = None
-def set_container(c): global _container; _container = c
+def set_container(c): 
+    global _container
+    _container = c
 def get_container():
-    if _container is None: raise RuntimeError("Container not ready")
+    if _container is None:
+        raise RuntimeError("Container not ready")
     return _container

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from .workflow import router as workflow_router  
+from .mcp_controller import router as mcp_router  
 
 def register_routers(app: FastAPI):
-    app.include_router(workflow_router, prefix="/mcp")  
+    app.include_router(mcp_router, prefix="/mcp")  

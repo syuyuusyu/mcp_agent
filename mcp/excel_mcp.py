@@ -5,12 +5,12 @@ import os
 from langchain_core.tools import tool
 from typing import Any
 import boto3
-from app.utils import load_config_yaml
+from app.utils import load_config_yaml,repo_root
 import io
 
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-files_dir = os.path.join(project_root, "files")
+project_root_path = repo_root()
+files_dir = os.path.join(project_root_path, "files")
 
 config = load_config_yaml("config.yaml")
 

@@ -1,6 +1,7 @@
-v="v1.0.0"
-ip="docker.io"
-name="syuyuusyu/mcp-agent"
+v="v1.0"
+#ip="docker.io/syuyuusyu"
+ip="swr.cn-north-1.myhuaweicloud.com/bqm"
+name="mcp-agent"
 docker buildx build --platform linux/amd64 --load -t $ip/$name:$v . &&
 docker push $ip/$name:$v &&
 echo $ip/$name:$v

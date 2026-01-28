@@ -17,6 +17,10 @@ from .excel_mcp import (
     create_excel_file,
 )
 
+from .bqm_mcp import (
+    relod_report,
+)
+
 __all__ = [
     "list_databases",
     "list_tables",
@@ -33,4 +37,6 @@ __all__ = [
     "write_sheet_data",
     "write_sheet_formula",
     "create_excel_file",
+
+    "relod_report",
 ]

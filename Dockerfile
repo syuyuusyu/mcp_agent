@@ -51,14 +51,22 @@ WORKDIR /app
 RUN rm -rf /usr/share/man/* /usr/share/doc/* /usr/share/locale/* /var/lib/apt/lists/* || true
 
 # Copy trimmed virtualenv and only the necessary application files
-COPY --from=builder /app/.venv /app/.venv
+# COPY --from=builder /app/.venv /app/.venv     <-- 注释掉旧的
+
+# 将 builder 阶段生成的 site-packages 直接复制到系统 python 目录
+COPY --from=builder /app/.venv/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+# 同时复制 bin 目录下的脚本（如 uvicorn）到系统 bin
+COPY --from=builder /app/.venv/bin/* /usr/local/bin/
+
 COPY --from=builder /app/main.py /app/main.py
 COPY --from=builder /app/app /app/app
 COPY --from=builder /app/mcp /app/mcp
 COPY --from=builder /app/config.yaml /app/config.yaml
 COPY --from=builder /app/workflow.yaml /app/workflow.yaml
 COPY --from=builder /app/uv.lock /app/uv.lock
-ENV PATH=/app/.venv/bin:$PATH
+# ENV PATH=/app/.venv/bin:$PATH                  <-- 不再需要
+# ENV PYTHONPATH=/app/.venv/lib/python3.11/site-packages  <-- 不再需要
 
 EXPOSE 8002
+# 使用 python -m uvicorn 确保使用系统 Python 解释器启动，避免依赖 venv 中硬编码路径的 uvicorn 脚本
 ENTRYPOINT ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002", "--workers", "2"]
