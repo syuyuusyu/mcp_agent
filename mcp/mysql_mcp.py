@@ -1,5 +1,5 @@
 from langchain_core.tools import tool
-from app.utils import DbConnectionPool, DbClient,load_config_yaml
+from app.utils import DbConnectionPool, DbClient,load_config_yaml,logger
 from typing import Optional, Dict, Any, List
 from sqlalchemy.sql import text
 
@@ -14,13 +14,13 @@ db_pool = DbConnectionPool(datasource)
 db_client = DbClient(db_pool)
 
 @tool("list_databases")
-async def list_databases() -> List[str]:
+def list_databases() -> List[str]:
     """List all accessible databases on the MySQL server"""
     results = db_client.query("SHOW DATABASES")
     return [row['Database'] for row in results]
 
 @tool("list_tables")
-async def list_tables(database: Optional[str] = None) -> List[str]:
+def list_tables(database: Optional[str] = None) -> List[str]:
     """List all tables in a specified database"""
     if database:
         db_client.execute_no_result(f"USE {database}")
@@ -28,7 +28,7 @@ async def list_tables(database: Optional[str] = None) -> List[str]:
     return [row[f"Tables_in_{database or datasource['database']}"] for row in results]
 
 @tool("describe_table")
-async def describe_table(table: str, database: Optional[str] = None) -> List[Dict[str, str]]:
+def describe_table(table: str, database: Optional[str] = None) -> List[Dict[str, str]]:
     """Show the schema for a specific table"""
     if database:
         db_client.execute_no_result(f"USE {database}")
@@ -46,7 +46,7 @@ async def describe_table(table: str, database: Optional[str] = None) -> List[Dic
     ]
 
 @tool("execute_sql")
-async def execute_sql(query: str, database: Optional[str] = None, allow_mcp_ddl: bool = False) -> List[Dict[str, Any]]:
+def execute_sql(query: str, database: Optional[str] = None, allow_mcp_ddl: bool = False) -> List[Dict[str, Any]]:
     """
     Execute a SQL query. If allow_mcp_ddl is True, DDL operations are allowed. 
     
@@ -58,6 +58,7 @@ async def execute_sql(query: str, database: Optional[str] = None, allow_mcp_ddl:
     Important: Don't specify database parameter unless explicitly required by the user or workflow.
     """
     # Check if the query is allowed
+    logger.info(f"Executing SQL: {query} on database: {database} with allow_mcp_ddl={allow_mcp_ddl}")
     query = query.strip()
     query_lower = query.lower()
     
@@ -103,12 +104,12 @@ async def execute_sql(query: str, database: Optional[str] = None, allow_mcp_ddl:
         return results
     
 @tool("exec_sql_batch")    
-async def exec_sql_batch(sqls: List[str], database: Optional[str] = None, allow_mcp_ddl: bool = False) -> List[List[Dict[str, Any]]]:
+def exec_sql_batch(sqls: List[str], database: Optional[str] = None, allow_mcp_ddl: bool = False) -> List[List[Dict[str, Any]]]:
     """Execute a batch of SQL statements.此方法会循环调用execute_sql方法"""
     results = []
     for sql in sqls:
         # Use ainvoke to call the LangChain tool properly
-        result = await execute_sql.ainvoke({
+        result = execute_sql.ainvoke({
             "query": sql, 
             "database": database, 
             "allow_mcp_ddl": allow_mcp_ddl
