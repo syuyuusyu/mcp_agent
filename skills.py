@@ -12,8 +12,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 import uuid
 
 # 1. 发现并管理 Skills（扫描本地目录、git repo 或 web SKILL.md）
-# 显式指定 .skills 目录，防止默认行为寻找 ./skills 而忽略了 .skills
-manager = SkillManager(project_skill_dir=Path(repo_root()) / ".skills")
+# 显式指定 .skills 目录，防止默认行为寻找 ./skills 而忽略了 .skills/
+manager = SkillManager(project_skill_dir=Path(repo_root()) / "skills")
 manager.discover()               # 默认扫描当前项目 .skills/ 或 ~/.skills/
 # manager.discover_from_url("https://github.com/awesome-claude-skills/...")  # 支持远程
 
