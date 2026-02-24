@@ -5,8 +5,10 @@ from langchain_openai import ChatOpenAI
 from langchain_deepseek import ChatDeepSeek
 from langchain_community.chat_models import ChatTongyi
 from langgraph.prebuilt import create_react_agent ,ToolNode # type: ignore
-from typing import AsyncGenerator
-from langchain_core.messages import HumanMessage
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import interrupt
+from typing import AsyncGenerator, Optional
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 import json
 from pathlib import Path
 from psycopg_pool import AsyncConnectionPool
@@ -14,11 +16,74 @@ from psycopg_pool import AsyncConnectionPool
 from skillkit import SkillManager
 from skillkit.integrations.langchain import create_langchain_tools
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from .approval_enums import ApprovalMode
 
 
 config = load_config_yaml("config.yaml")
 pg = config.get("postgres", {})
 mcp_model = config.get("mcp_model", {})
+
+
+def approval_node(state):
+    """
+    Pause execution to request user approval before proceeding.
+    The decision is stored back into state for downstream nodes.
+    """
+    decision = interrupt({"type": "approval_required"})
+    if isinstance(state, dict):
+        updated_state = dict(state)
+        updated_state["approval_decision"] = decision
+        return updated_state
+    return {"state": state, "approval_decision": decision}
+
+
+def should_continue(state):
+    """
+    Determine if we should proceed to approval (and then tools) or end.
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return END
+    last_message = messages[-1]
+    # If there are no tool calls, we finish
+    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+        return END
+    return "approval"
+
+
+def check_approval(state):
+    """
+    Check the approval decision.
+    """
+    decision = state.get("approval_decision")
+    # You might want to support more complex payloads, 
+    # but strictly checking "approve" is a good safe default.
+    if decision == "approve":
+        return "tools"
+    # If rejected, we end the turn (or potentially feedback to agent)
+    return END
+
+
+def build_agent_node(llm, system_prompt: Optional[str] = None):
+    """
+    Create an agent node that calls the LLM and appends the response
+    to state["messages"].
+    """
+    async def agent_node(state):
+        messages = list(state.get("messages", [])) if isinstance(state, dict) else []
+        if system_prompt:
+            if not messages or not isinstance(messages[0], SystemMessage) or messages[0].content != system_prompt:
+                messages = [SystemMessage(content=system_prompt)] + messages
+
+        response = await llm.ainvoke(messages)
+
+        updated_state = dict(state) if isinstance(state, dict) else {}
+        updated_messages = list(updated_state.get("messages", []))
+        updated_messages.append(response)
+        updated_state["messages"] = updated_messages
+        return updated_state
+
+    return agent_node
 
 class LangGraphAgent:
 
@@ -62,10 +127,11 @@ class LangGraphAgent:
                 )
         return cls.llm_map[model]
 
-    def __init__(self,model:str,topic_id:str,system_prompt:str):
+    def __init__(self,model:str,topic_id:str,system_prompt:str,approvalMode:ApprovalMode = ApprovalMode.AUTO):
         self.topic_id = topic_id
         self.system_prompt = system_prompt
         self.model = model
+        self.approvalMode = approvalMode
 
     def get_mcp_tools(self):
         tool_names = getattr(mcp, "__all__", []) 
@@ -147,7 +213,12 @@ class LangGraphAgent:
             logger.info("PostgreSQL connection pool closed")
     
 
-
+    async def aget_history(self):
+        agent_executor = await self.aget_agent_executor()
+        config = {"configurable": {"thread_id": self.topic_id}}
+        state = await agent_executor.aget_state(config)
+        # state.values is a dict, typically containing 'messages'
+        return state.values.get("messages", [])
 
 
     async def aget_agent_executor(self):
@@ -159,13 +230,46 @@ class LangGraphAgent:
         # 手动创建 ToolNode 并开启错误处理
         # handle_tool_errors=True 会将错误信息作为观察结果返回给大模型，让它决定如何处理（例如重试）
         tool_node = ToolNode(tools, handle_tool_errors=True)
+        if self.approvalMode == ApprovalMode.AUTO:
+            return create_react_agent(self.get_llm(self.model),
+                                                tool_node, # 传入 ToolNode 而不是 tools 列表
+                                                prompt=self.system_prompt, 
+                                                checkpointer=cp)
+        if self.approvalMode == ApprovalMode.ALWAYS:
+            return self._create_agent_with_approval_node(
+                build_agent_node(self.get_llm(self.model), self.system_prompt), 
+                tool_node, 
+                cp
+            )
+    def _create_agent_with_approval_node(self, agent_node, tool_node, cp):
+        graph = StateGraph(dict)
+        graph.add_node("agent", agent_node)
+        graph.add_node("approval", approval_node)  # 新增
+        graph.add_node("tools", tool_node)
         
-        return create_react_agent(self.get_llm(self.model),
-                                            tool_node, # 传入 ToolNode 而不是 tools 列表
-                                            prompt=self.system_prompt, 
-                                            checkpointer=cp)
-    
-    # Removed synchronous response method as we are moving to async completely for checkpoints
+        graph.add_edge(START, "agent")
+        
+        # Replace unconditional edges with conditional logic
+        
+        # 1. Agent -> Approval (only if tools calls exist)
+        graph.add_conditional_edges(
+            "agent",
+            should_continue,
+            ["approval", END]
+        )
+        
+        # 2. Approval -> Tools (only if approved)
+        graph.add_conditional_edges(
+            "approval", 
+            check_approval, 
+            ["tools", END]
+        )
+        
+        graph.add_edge("tools", "agent")
+        # graph.add_edge("agent", END) # Removed as implicit in conditional
+        
+        return graph.compile(checkpointer=cp)
+
 
     def _serialize_langchain_object(self, obj):
         """递归将 LangChain 对象转换为可 JSON 序列化的格式"""
@@ -184,180 +288,147 @@ class LangGraphAgent:
         else:
             return obj
 
+
     async def astream_response(self, model, user_input) -> AsyncGenerator[str, None]:
+        """使用事件处理器分离不同类型事件的逻辑"""
+        
         self.model = model
         agent_executor = await self.aget_agent_executor()
         config = {"configurable": {"thread_id": self.topic_id}}
-        
+    
+
         event_count = 0
-        tool_call_depth = 0
         graph_completed = False
+        last_event = None
+        
+        # 定义事件处理器
+        handlers = {
+            "on_tool_start": self._handle_tool_start,
+            "on_tool_end": self._handle_tool_end,
+            "on_chain_end": self._handle_chain_end,
+            "on_approval_required": self._handle_approval,
+        }
+        
         try:
             async for event in agent_executor.astream_events(
                 {"messages": [HumanMessage(content=user_input)]},
                 config=config,
                 version="v2"
             ):
-                #print(event)
                 event_count += 1
                 kind = event.get('event')
-                logger.info(kind)
-                
-                # 递归序列化整个 event 对象
+
+                last_event = event
+                # 统一的序列化和元数据处理
                 serialized_event = self._serialize_langchain_object(event)
-                
-                # 在 metadata 中添加流状态标志，帮助前端判断
-                if "metadata" not in serialized_event:
-                    serialized_event["metadata"] = {}
-                
+                serialized_event.setdefault("metadata", {})
                 serialized_event["metadata"]["event_index"] = event_count
+                #print(serialized_event)
                 
-                # 获取 LangGraph 的执行信息
-                langgraph_step = serialized_event.get("metadata", {}).get("langgraph_step", 0)
-                langgraph_node = serialized_event.get("metadata", {}).get("langgraph_node")
-                remaining_steps = serialized_event.get("data", {}).get("remaining_steps", 0)
-                
-                # 追踪 Tool Call 的嵌套深度
-                if kind == "on_tool_start":
-                    tool_call_depth += 1
-                elif kind == "on_tool_end":
-                    tool_call_depth -= 1
-                
-                # 判断是否是整个 Graph 执行的结束
-                is_graph_complete = (
-                    kind == "on_chain_end" and
-                    langgraph_node == "agent" and
-                    "output" in serialized_event.get("data", {}) and
-                    tool_call_depth == 0 and
-                    remaining_steps == 0
+                # 调用对应的处理器
+                handler = handlers.get(kind, self._handle_default_event)
+                event_output = handler(
+                    serialized_event, 
+                    graph_completed
                 )
-
-                if is_graph_complete and not graph_completed:
-                    graph_completed = True
-
-                # 仅在最后的 on_done 事件标记结束，避免多条 True
-                serialized_event["metadata"]["is_final_event"] = False
-                serialized_event["metadata"]["tool_call_depth"] = tool_call_depth
-                serialized_event["metadata"]["langgraph_step"] = langgraph_step
-                serialized_event["metadata"]["remaining_steps"] = remaining_steps
-                logger.info(is_graph_complete)
-                # 返回完全序列化的 JSON
-                yield json.dumps(serialized_event, ensure_ascii=False, default=str)
+                
+                # 更新状态
+                graph_completed = event_output.get("graph_completed", graph_completed)
+                
+                # 判断是否需要 yield
+                if event_output.get("should_yield", True):
+                    yield json.dumps(event_output["data"], ensure_ascii=False, default=str)
+                logger.info(f"Event: {kind}, Graph Completed: {graph_completed}, Event Index: {event_count}")
             
-            # 正常结束时发送一个明确的结束事件
-            if graph_completed:
-                final_event = {
-                    "event": "on_done",
-                    "event_index": event_count + 1,
-                    "metadata": {
-                        "thread_id": self.topic_id,
-                        "is_final_event": True
-                    }
-                }
-                yield json.dumps(final_event, ensure_ascii=False, default=str)
+            # 流结束后的处理
+            #if graph_completed:
+            logger.info(f"Graph execution completed after processing {event_count} events.")
+            logger.info(f"Final event: {last_event}")
+            yield json.dumps({
+                "event": "on_done",
+                "metadata": {"thread_id": self.topic_id, "is_final_event": True}
+            }, ensure_ascii=False)
+                
         except Exception as e:
-            # 捕获异步执行中的异常并返回给前端
-            # 使用 str(e) 避免 loguru 二次格式化导致的 KeyError
-            logger.error("Error during astream_response: {}", str(e), exc_info=True)
-            error_event = {
+            error_msg = str(e)
+            # 检查是否是 Invalid Chat History 错误
+            if "Found AIMessages with tool_calls that do not have a corresponding ToolMessage" in error_msg:
+                logger.warning(f"Detected invalid chat history ({error_msg}). Attempting to repair...")
+                try:
+                    pass #TODO
+
+                except Exception as repair_error:
+                    logger.error(f"Repair failed: {repair_error}")
+                    # 如果修复也失败了，那就抛出原始错误或者修复错误
+                    yield json.dumps({
+                        "event": "on_error",
+                        "error": f"Original error: {error_msg}. Repair failed: {str(repair_error)}",
+                        "metadata": {"thread_id": self.topic_id, "is_final_event": True}
+                    }, ensure_ascii=False)
+                    return
+
+            logger.exception(f"Error in astream_response: {e}")
+            yield json.dumps({
                 "event": "on_error",
                 "error": str(e),
-                "error_type": type(e).__name__,
-                "event_index": event_count,
-                "metadata": {
-                    "thread_id": self.topic_id,
-                    "is_final_event": True
-                }
-            }
-            yield json.dumps(error_event, ensure_ascii=False, default=str)
+                "metadata": {"thread_id": self.topic_id, "is_final_event": True}
+            }, ensure_ascii=False)
 
-    async def aget_history(self):
-        agent_executor = await self.aget_agent_executor()
-        config = {"configurable": {"thread_id": self.topic_id}}
-        state = await agent_executor.aget_state(config)
-        # state.values is a dict, typically containing 'messages'
-        return state.values.get("messages", [])
+    # 各个事件处理器
+    def _handle_tool_start(self, event, graph_completed):
+        """处理工具启动事件"""
+        
+        return {
+            "data": event,
+            "graph_completed": graph_completed,
+            "should_yield": True
+        }
 
-    def group_history_by_turn(self, messages):
-        """
-        将扁平的消息历史列表按“对话轮次”进行分组，方便前端展示。
-        逻辑：
-        1. 每一轮对话必定由 HumanMessage (用户) 开始。
-        2. 该 HumanMessage 之后的所有 ToolMessage 和 AIMessage 都归为该轮次的“回应”。
-        3. 回应中，带有 tool_calls 的 AIMessage 和 ToolMessage 视为“中间思考/执行步骤”。
-        4. 不带 tool_calls 的 AIMessage 视为“最终回答”。
-        """
-        history = []
-        current_turn = None
+    def _handle_tool_end(self, event, graph_completed):
+        """处理工具结束事件"""
+        
+        return {
+            "data": event,
+            "graph_completed": graph_completed,
+            "should_yield": True
+        }
 
-        for msg in messages:
-            # 兼容对象属性访问和字典访问
-            msg_type = getattr(msg, 'type', None) or (msg.get('type') if isinstance(msg, dict) else None)
-            
-            # --- 用户消息：开启新的一轮 ---
-            if msg_type == 'human':
-                # 保存前一轮
-                if current_turn:
-                    history.append(current_turn)
-                
-                current_turn = {
-                    "role": "user",
-                    "question": getattr(msg, 'content', "") or (msg.get('content') if isinstance(msg, dict) else ""),
-                    "steps": [],        # 存放思考过程、工具调用、工具结果
-                    "response": None,   # 存放最终 AI 回复
-                    "timestamp": None   # 可选：如果消息里有时间戳
-                }
-            
-            # --- AI 或 工具消息：归属于当前轮次 ---
-            elif current_turn is not None:
-                if msg_type == 'ai':
-                    # 检查是否包含工具调用（视为思考/行动步骤）
-                    tool_calls = getattr(msg, 'tool_calls', []) or (msg.get('tool_calls', []) if isinstance(msg, dict) else [])
-                    
-                    # 尝试提取 DeepSeek 的 thinking process
-                    additional_kwargs = getattr(msg, 'additional_kwargs', {}) or (msg.get('additional_kwargs', {}) if isinstance(msg, dict) else {})
-                    response_metadata = getattr(msg, 'response_metadata', {}) or (msg.get('response_metadata', {}) if isinstance(msg, dict) else {})
-                    reasoning_content = additional_kwargs.get('reasoning_content') or response_metadata.get('reasoning_content')
+    def _handle_chain_end(self, event, graph_completed):
+        """处理链结束事件"""
+        metadata = event.get("metadata", {})
+        langgraph_node = metadata.get("langgraph_node")
+        remaining_steps = event.get("data", {}).get("remaining_steps", 99)
+        
+        # 检查是否是最终的完成
+        if (langgraph_node == "agent" and 
+            remaining_steps == 0):
+            graph_completed = True
+        
+        return {
+            "data": event,
+            "graph_completed": graph_completed,
+            "should_yield": True
+        }
 
-                    if tool_calls:
-                        # 这是一个包含动作的步骤
-                        current_turn["steps"].append({
-                            "type": "process", # 过程：既包含模型思考(content)，也包含意图(tool_calls)
-                            "content": getattr(msg, 'content', "") or (msg.get('content') if isinstance(msg, dict) else ""),
-                            "reasoning_content": reasoning_content, # 新增：思考过程
-                            "tool_calls": tool_calls,
-                            "message_id": getattr(msg, 'id', None) or (msg.get('id') if isinstance(msg, dict) else None)
-                        })
-                    else:
-                        # 这是一个纯回复（最终结果）
-                        content = getattr(msg, 'content', "") or (msg.get('content') if isinstance(msg, dict) else "")
-                        
-                        # 如果有思考过程但尚未记录，也可以作为一步 process 添加进去，以免丢失
-                        if reasoning_content:
-                             current_turn["steps"].append({
-                                "type": "process",
-                                "content": "", # 纯思考，没有对用户的显式 content
-                                "reasoning_content": reasoning_content,
-                                "tool_calls": [],
-                                "message_id": getattr(msg, 'id', None) or (msg.get('id') if isinstance(msg, dict) else None)
-                            })
+    def _handle_approval(self, event, graph_completed):
+        """处理审批事件（需要前端确认时）"""
+        # 这种事件通常需要特殊处理，可能不立即 yield
+        approval_data = event.get("data", {})
+        
+        logger.info(f"Approval required for: {approval_data}")
+        
+        return {
+            "data": event,
+            "graph_completed": graph_completed,
+            "should_yield": True
+        }
 
-                        if current_turn["response"] is None:
-                            current_turn["response"] = content
-                        else:
-                            current_turn["response"] += content # 简单拼接
+    def _handle_default_event(self, event, graph_completed):
+        """默认事件处理"""
+        return {
+            "data": event,
+            "graph_completed": graph_completed,
+            "should_yield": True
+        }
 
-                elif msg_type == 'tool':
-                    # 工具运行结果，视为一个步骤
-                    current_turn["steps"].append({
-                        "type": "tool_result",
-                        "content": getattr(msg, 'content', "") or (msg.get('content') if isinstance(msg, dict) else ""),
-                        "tool_call_id": getattr(msg, 'tool_call_id', None) or (msg.get('tool_call_id') if isinstance(msg, dict) else None),
-                        "name": getattr(msg, 'name', None) or (msg.get('name') if isinstance(msg, dict) else None) 
-                    })
 
-        # 别忘了追加最后一轮
-        if current_turn:
-            history.append(current_turn)
-            
-        return history

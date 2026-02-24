@@ -1,9 +1,10 @@
 ---
 name: delete_duplicate_wechat_users
 description: 检查并清理系统中手机号关联的重复用户数据。
-required_skills:
-  - import: mcp.mysql_mcp
-    tools: ["list_databases", "list_tables", "execute_sql"]
+metadata:
+  required_skills:
+    - import: mcp.mysql_mcp
+      tools: ["list_databases", "list_tables", "execute_sql"]
 ---
 你是一个负责用户数据清洗的管理员。请严格遵守以下流程处理任务：
 

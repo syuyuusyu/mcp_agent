@@ -39,8 +39,8 @@ async def get_system_info() -> Dict[str, Any]:
 
 
 @tool("execute_shell")
-async def execute_shell(command: str, timeout: int = 30, working_dir: Optional[str] = None) -> Dict[str, Any]:
-    """Execute a shell command and return the result.
+async def execute_shell(command: str, timeout: int = 30, working_dir: Optional[str] = None) -> str:
+    """Execute a shell command and return the result as a formatted string.
     
     Args:
         command (str): Shell command to execute
@@ -48,10 +48,11 @@ async def execute_shell(command: str, timeout: int = 30, working_dir: Optional[s
         working_dir (str, optional): Working directory for command execution
         
     Returns:
-        dict: Contains exit_code, stdout, stderr, execution_time, and system info
+        str: Formatted execution result including stdout, stderr, and exit code
     """
     start_time = time.time()
     system_type = platform.system().lower()
+    cwd = working_dir or os.getcwd()
     
     try:
         # Determine shell based on OS
@@ -76,38 +77,21 @@ async def execute_shell(command: str, timeout: int = 30, working_dir: Optional[s
         
         execution_time = time.time() - start_time
         
-        return {
-            "exit_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "execution_time": round(execution_time, 2),
-            "command": command,
-            "working_directory": working_dir or os.getcwd(),
-            "system_type": system_type,
-            "success": result.returncode == 0
-        }
+        output_lines = [f"$ {command}"]
+        if result.stdout and result.stdout.strip():
+            output_lines.append(result.stdout.strip())
+        if result.stderr and result.stderr.strip():
+            output_lines.append(f"[stderr]\n{result.stderr.strip()}")
         
+        if result.returncode != 0:
+            output_lines.append(f"[Exit Code: {result.returncode}]")
+        
+        return "\n".join(output_lines)
+
     except subprocess.TimeoutExpired:
         execution_time = time.time() - start_time
-        return {
-            "exit_code": -1,
-            "stdout": "",
-            "stderr": f"Command timed out after {timeout} seconds",
-            "execution_time": round(execution_time, 2),
-            "command": command,
-            "working_directory": working_dir or os.getcwd(),
-            "system_type": system_type,
-            "success": False
-        }
+        return f"$ {command}\n[Error: Command timed out after {timeout} seconds]"
+        
     except Exception as e:
         execution_time = time.time() - start_time
-        return {
-            "exit_code": -1,
-            "stdout": "",
-            "stderr": str(e),
-            "execution_time": round(execution_time, 2),
-            "command": command,
-            "working_directory": working_dir or os.getcwd(),
-            "system_type": system_type,
-            "success": False
-        }
+        return f"$ {command}\n[Error: {str(e)}]"

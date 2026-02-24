@@ -41,7 +41,6 @@ async def recordList(topicId: str):
     list = await agent.aget_history()
     if list is None or len(list) == 0:
         return []
-    #return agent.group_history_by_turn(list)
     return list
     
 
