@@ -1,0 +1,95 @@
+[
+    {
+        "content": "使用 kubectl skills, 查看一下 ns prod 下的 pod 状态",
+        "additional_kwargs": {},
+        "response_metadata": {},
+        "type": "human",
+        "name": null,
+        "id": "131b5ac3-bd08-4256-9a8a-35d6fc585d48"
+    },
+    {
+        "content": "",
+        "additional_kwargs": {},
+        "response_metadata": {
+            "finish_reason": "tool_calls",
+            "model_name": "qwen-max-latest",
+            "model_provider": "openai"
+        },
+        "type": "ai",
+        "name": null,
+        "id": "lc_run--019c6945-9c1a-77f3-a04b-4af08cf90887",
+        "tool_calls": [
+            {
+                "name": "kubectl",
+                "args": {
+                    "arguments": "get pods -n prod"
+                },
+                "id": "call_65b49a19cb544ae3a42ab5",
+                "type": "tool_call"
+            }
+        ],
+        "invalid_tool_calls": [],
+        "usage_metadata": null
+    },
+    {
+        "content": "Base directory for this skill: /Users/syu/project/ml/ai_chat/mcp_agent/skills/kubectl\n\nSupporting files can be referenced using relative paths from this base directory.\nUse FilePathResolver.resolve_path(base_dir, relative_path) to securely access files.\n\n---\nname: kubectl\ndescription: 使用 kubectl 管理 Kubernetes 集群资源。由于环境限制，必须通过指定 kubeconfig 文件路径来操作特定集群。\nmetadata:\n  required_skills:\n    - import: mcp.shell_mcp\n      tools: [\"execute_shell\"]\n---\n你是一个专业的 Kubernetes 运维助手。在此环境中，你需要使用 `kubectl` 命令来操作 K8s 集群。\n\n**关键规则：**\n\n1.  **环境配置**：\n    由于无法加载 shell alias，你**必须**在所有 kubectl 命令中显式指定 kubeconfig 路径。\n    *   **Kubeconfig 路径**: `/Users/syu/.kube/bqm_k3s`\n    *   **命令格式**: `kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s <command> ...`\n\n    *   ❌ `kubectl get pods` (错误：未指定配置文件)\n    *   ❌ `kubqm get pods` (错误：alias 不可用)\n    *   ✅ `kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s get pods`\n\n2.  **执行方式**：\n    使用 `execute_shell` 工具执行构建好的完整命令。\n\n3.  **非交互式限制**：\n    *   `execute_shell` 不支持交互式终端。\n    *   不要执行 `exec -it` 或 `logs -f` 这种会阻塞或需要用户输入的命令。\n    *   若需在 Pod 内执行命令，去掉 `-it`，例如：`kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s exec <pod_name> -- ls -la /app`。\n    *   若需查看日志，使用 `--tail` 限制行数，例如：`kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s logs <pod_name> --tail=200`。\n\n4.  **常用场景 SOP**：\n\n    *   **集群概况查看**：\n        ```bash\n        kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s get nodes\n        kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s get pods -A\n        ```\n\n    *   **排查 Pod 问题**：\n        1.  查看 Pod 状态: `kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s get pod <pod_name> -n <ns>`\n        2.  查看详细事件: `kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s describe pod <pod_name> -n <ns>`\n        3.  查看应用日志: `kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s logs <pod_name> -n <ns> --tail=100`\n        4.  查看上一容器日志(如果崩溃重启过): `kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s logs <pod_name> -n <ns> --previous`\n\n    *   **资源操作 (需谨慎)**：\n        *   在执行 `delete`, `scale`, `apply`, `edit` (不推荐edit) 等修改类操作前，**务必**先向用户确认，在用户明确同意后再执行操作。\n\n5.  **输出解析**：\n    *   如果命令输出过长（例如 YAML），请尝试只提取关键信息展示给用户，或者询问用户是否需要完整内容。\n\n\nARGUMENTS: get pods -n prod",
+        "additional_kwargs": {},
+        "response_metadata": {},
+        "type": "tool",
+        "name": "kubectl",
+        "id": "ee12cea9-fe24-422a-961c-c625ac13a013",
+        "tool_call_id": "call_65b49a19cb544ae3a42ab5",
+        "artifact": null,
+        "status": "success"
+    },
+    {
+        "content": "为了查看 `prod` 命名空间下的 Pod 状态，需要执行以下命令：\n\n```bash\nkubectl --kubeconfig=/Users/syu/.kube/bqm_k3s get pods -n prod\n```\n\n让我来运行这个命令并获取结果。",
+        "additional_kwargs": {},
+        "response_metadata": {
+            "finish_reason": "tool_calls",
+            "model_name": "qwen-max-latest",
+            "model_provider": "openai"
+        },
+        "type": "ai",
+        "name": null,
+        "id": "lc_run--019c6945-a1b6-7151-b311-a9e671889d49",
+        "tool_calls": [
+            {
+                "name": "execute_shell",
+                "args": {
+                    "command": "kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s get pods -n prod"
+                },
+                "id": "call_75ca07f4e0104b99931720",
+                "type": "tool_call"
+            }
+        ],
+        "invalid_tool_calls": [],
+        "usage_metadata": null
+    },
+    {
+        "content": "$ kubectl --kubeconfig=/Users/syu/.kube/bqm_k3s get pods -n prod\nNAME                        READY   STATUS    RESTARTS   AGE\nai-86d89c476b-7vj4l         1/1     Running   0          9h\nbase-f47bf7895-jk6hd        1/1     Running   0          9h\ncommon-7b877c4dd7-cj2l6     1/1     Running   0          9h\neureka-6db9466cdd-rgnkk     1/1     Running   0          51d\ngateway-9f99db75f-x799g     1/1     Running   0          5d18h\nhis1-68879fcbcd-qfhvq       1/1     Running   0          9h\nhis2-774c6c48cb-qg55n       1/1     Running   0          9h\nkube-6dd9d97f69-5pkxv       1/1     Running   0          9h\nlegacy-69954d85df-5z99h     1/1     Running   0          9h\nnetease-5f8bdf9548-khlkc    1/1     Running   0          9h\nom-7d784f9d44-bdkv5         1/1     Running   0          9h\npay1-86b99bd4bb-976n7       1/1     Running   0          9h\npay2-867f976d8d-7nsxg       1/1     Running   0          9h\nrabbitmq-67f4478ccd-xrrx5   1/1     Running   0          51d\nthird-6df67d945c-g8pw7      1/1     Running   0          9h",
+        "additional_kwargs": {},
+        "response_metadata": {},
+        "type": "tool",
+        "name": "execute_shell",
+        "id": "b3d54f6c-8c65-46cb-a057-620a886a23b9",
+        "tool_call_id": "call_75ca07f4e0104b99931720",
+        "artifact": null,
+        "status": "success"
+    },
+    {
+        "content": "在 `prod` 命名空间下，当前的 Pod 状态如下：\n\n```\nNAME                        READY   STATUS    RESTARTS   AGE\nai-86d89c476b-7vj4l         1/1     Running   0          9h\nbase-f47bf7895-jk6hd        1/1     Running   0          9h\ncommon-7b877c4dd7-cj2l6     1/1     Running   0          9h\neureka-6db9466cdd-rgnkk     1/1     Running   0          51d\ngateway-9f99db75f-x799g     1/1     Running   0          5d18h\nhis1-68879fcbcd-qfhvq       1/1     Running   0          9h\nhis2-774c6c48cb-qg55n       1/1     Running   0          9h\nkube-6dd9d97f69-5pkxv       1/1     Running   0          9h\nlegacy-69954d85df-5z99h     1/1     Running   0          9h\nnetease-5f8bdf9548-khlkc    1/1     Running   0          9h\nom-7d784f9d44-bdkv5         1/1     Running   0          9h\npay1-86b99bd4bb-976n7       1/1     Running   0          9h\npay2-867f976d8d-7nsxg       1/1     Running   0          9h\nrabbitmq-67f4478ccd-xrrx5   1/1     Running   0          51d\nthird-6df67d945c-g8pw7      1/1     Running   0          9h\n```\n\n所有 Pod 都处于 **Running** 状态，且没有重启记录。",
+        "additional_kwargs": {},
+        "response_metadata": {
+            "finish_reason": "stop",
+            "model_name": "qwen-max-latest",
+            "model_provider": "openai"
+        },
+        "type": "ai",
+        "name": null,
+        "id": "lc_run--019c6945-b7a9-75c1-a1e7-a6cbaf573155",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null
+    }
+]
