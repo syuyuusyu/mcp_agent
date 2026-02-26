@@ -1,0 +1,24 @@
+log_dir: /Users/syu/project/ml/ai_chat/mcp_agent/logs
+mcp_model:
+  api_key: sk-fadb6690a1144f16b9212266a4e2d666
+  url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: deepseek-v3.2
+datasource:
+  host: 74.48.18.221
+  port: 3306
+  user: root
+  password: 'LW56wii3g7qGf71ZCA'
+  database: app
+
+postgres:
+  host: 74.48.18.221
+  port: 5432
+  user: syu
+  password: 'LW56wii3g7qGf71ZCA'
+  database: app
+
+oss:
+  endpoint: http://www.51bqm.com:9000
+  access-key: admin
+  secret-key: n7d3t7x7
+  bucket-name: mcp
