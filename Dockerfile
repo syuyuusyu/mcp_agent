@@ -23,7 +23,7 @@ COPY pyproject.toml uv.lock ./
 RUN test -f uv.lock
 
 # Place config files next to uv.lock so runtime lookup works
-COPY config.yaml workflow.yaml ./
+COPY config.yaml mcp.yaml ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-install-project --python ${PYTHON_VERSION}
 
 # Remove typical junk (tests, pyc) early to reduce copy size
@@ -35,6 +35,7 @@ RUN find .venv/lib/python3.11/site-packages -type d \( -name tests -o -name test
 
 COPY app app
 COPY mcp mcp
+COPY skills skills
 COPY main.py .
 
 # Prune project caches to reduce final size
@@ -49,6 +50,8 @@ WORKDIR /app
 
 # Optional prune of manpages / locales / docs to save space
 RUN rm -rf /usr/share/man/* /usr/share/doc/* /usr/share/locale/* /var/lib/apt/lists/* || true
+# Install util-linux for nsenter to allow host command execution
+RUN apt-get update && apt-get install -y util-linux && rm -rf /var/lib/apt/lists/*
 
 # Copy trimmed virtualenv and only the necessary application files
 # COPY --from=builder /app/.venv /app/.venv     <-- 注释掉旧的
@@ -62,8 +65,9 @@ COPY --from=builder /app/main.py /app/main.py
 COPY --from=builder /app/app /app/app
 COPY --from=builder /app/mcp /app/mcp
 COPY --from=builder /app/config.yaml /app/config.yaml
-COPY --from=builder /app/workflow.yaml /app/workflow.yaml
+COPY --from=builder /app/mcp.yaml /app/mcp.yaml
 COPY --from=builder /app/uv.lock /app/uv.lock
+COPY --from=builder /app/skills /app/skills
 # ENV PATH=/app/.venv/bin:$PATH                  <-- 不再需要
 # ENV PYTHONPATH=/app/.venv/lib/python3.11/site-packages  <-- 不再需要
 

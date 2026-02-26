@@ -17,11 +17,18 @@ from skillkit import SkillManager
 from skillkit.integrations.langchain import create_langchain_tools
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from .approval_enums import ApprovalMode
+from urllib.parse import quote_plus
 
 
 config = load_config_yaml("config.yaml")
 pg = config.get("postgres", {})
 mcp_model = config.get("mcp_model", {})
+
+default_system_prompt = """
+Before planning a step-by-step solution using raw database tools (like list_tables, execute_sql), 
+ALWAYS check if a specialized Skill tool exists for the user's request.
+If a Skill matches the intent (e.g. data fixing, specific report), use the Skill directly instead of manually querying the database."
+"""
 
 
 def approval_node(state):
@@ -101,6 +108,7 @@ class LangGraphAgent:
                     model=model, 
                     api_key=mcp_model.get("api_key"), 
                     api_base=mcp_model.get("url"), # ChatDeepSeek 使用 api_base
+                    model_kwargs={"extra_body": {"enable_search": True}} 
                 )
             elif "qwen" in model.lower() or 'qwq' in model.lower():
                 try:
@@ -109,15 +117,19 @@ class LangGraphAgent:
                     cls.llm_map[model] = ChatTongyi(
                         model=model,
                         api_key=mcp_model.get("api_key"),
-                        # ChatTongyi 使用原生 DashScope SDK，通常不需要 base_url，除非是专有云等情况
-                        # 如果需要获取思考过程，原生 SDK 支持通常更好
+                        model_kwargs={
+                            "enable_search": True
+                            # 或者如果是通过 OpenAI 兼容接口调用，则是：
+                            # "extra_body": {"enable_search": True} 
+                        }
                     )
                 except ImportError:
                     logger.warning("Install 'dashscope' and 'langchain-community' to use ChatTongyi. Falling back to ChatOpenAI.")
                     cls.llm_map[model] = ChatOpenAI(
                         model=model, 
                         api_key=mcp_model.get("api_key"), 
-                        base_url=mcp_model.get("url")
+                        base_url=mcp_model.get("url"),
+                        model_kwargs={"extra_body": {"enable_search": True}} # 开启联网搜索
                     )
             else:
                 cls.llm_map[model] = ChatOpenAI(
@@ -125,9 +137,11 @@ class LangGraphAgent:
                     api_key=mcp_model.get("api_key"), 
                     base_url=mcp_model.get("url")
                 )
-        return cls.llm_map[model]
+        kknd = cls.llm_map[model]
+        logger.info(f"Using LLM for model '{model}': {kknd.__class__.__name__}")
+        return kknd
 
-    def __init__(self,model:str,topic_id:str,system_prompt:str,approvalMode:ApprovalMode = ApprovalMode.AUTO):
+    def __init__(self,model:str,topic_id:str,system_prompt:str=default_system_prompt,approvalMode:ApprovalMode = ApprovalMode.AUTO):
         self.topic_id = topic_id
         self.system_prompt = system_prompt
         self.model = model
@@ -153,7 +167,14 @@ class LangGraphAgent:
         """创建并返回 PostgreSQL 异步连接池"""
         if not cls._connection_pool:
             try:
-                connection_string = f"postgresql://{pg.get('user')}:{pg.get('password')}@{pg.get('host')}:{pg.get('port', 5432)}/{pg.get('database')}"
+                # 对用户名和密码进行 URL 编码，防止特殊字符（如 @, :, /）破坏连接字符串格式
+                user = quote_plus(str(pg.get('user')))
+                password = quote_plus(str(pg.get('password')))
+                host = pg.get('host')
+                port = pg.get('port', 5432)
+                dbname = pg.get('database')
+                
+                connection_string = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
                 cls._connection_pool = AsyncConnectionPool(
                     conninfo=connection_string,
                     min_size=2,  # 最小连接数
@@ -164,6 +185,7 @@ class LangGraphAgent:
                     open=False,  # 延迟打开，稍后调用 open()
                     check=AsyncConnectionPool.check_connection,
                     kwargs={
+                        "autocommit": True,
                         "keepalives": 1,
                         "keepalives_idle": 60,
                         "keepalives_interval": 15,

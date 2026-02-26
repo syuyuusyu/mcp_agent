@@ -4,18 +4,18 @@ mcp_model:
   url: https://dashscope.aliyuncs.com/compatible-mode/v1
   model: deepseek-v3.2
 datasource:
-  host: 74.48.18.221
+  host: 49.4.55.222
   port: 3306
-  user: root
-  password: 'LW56wii3g7qGf71ZCA'
-  database: app
+  user: bqm
+  password: '_s7hP@HG7(ZL!PEXaw'
+  database: bqm
 
 postgres:
-  host: 74.48.18.221
+  host: 49.4.13.146
   port: 5432
-  user: syu
-  password: 'LW56wii3g7qGf71ZCA'
-  database: app
+  user: bqm
+  password: '_s7hP@HG7(ZL!PEXaw'
+  database: bqm
 
 oss:
   endpoint: http://www.51bqm.com:9000

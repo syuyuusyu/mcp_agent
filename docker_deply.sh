@@ -1,4 +1,4 @@
-v="v1.0"
+v="v2.0"
 #ip="docker.io/syuyuusyu"
 ip="swr.cn-north-1.myhuaweicloud.com/bqm"
 name="mcp-agent"

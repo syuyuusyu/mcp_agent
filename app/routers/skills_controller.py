@@ -21,7 +21,7 @@ async def chat_stream(request: Request):
     user_input = data.get("user_input")
     topic_id = data.get("topic_id", "default_topic")
 
-    agent = LangGraphAgent(model=model, topic_id=topic_id, system_prompt="")
+    agent = LangGraphAgent(model=model, topic_id=topic_id)
     
     # 转换为 SSE 格式的生成器
     async def sse_wrapper():
@@ -37,7 +37,7 @@ async def chat_stream(request: Request):
 @router.get("/history/{topicId}/list")
 async def recordList(topicId: str):
     # 为了获取历史记录，我们需要初始化一个 Agent 实例
-    agent = LangGraphAgent(model="", topic_id=topicId, system_prompt="")
+    agent = LangGraphAgent(model="", topic_id=topicId)
     list = await agent.aget_history()
     if list is None or len(list) == 0:
         return []
