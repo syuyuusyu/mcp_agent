@@ -1,18 +1,21 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
-
-from ..utils import logger,random_string
-
-
+import os
+import re
+from fastapi import UploadFile, File
+import mimetypes
 from dependency_injector.wiring import Provide, inject
 from app.dependencies import Container
 
-
+from ..utils import logger,random_string,load_config_yaml
 from ..service.langGraph_agent import LangGraphAgent
 
 
+config = load_config_yaml("config.yaml")
+
+oss_config = config.get("oss",{})
+
 router = APIRouter()
-userId='UuyZ1kFVi6'
 
 @router.post("/chat_stream")
 async def chat_stream(request: Request):
@@ -20,12 +23,20 @@ async def chat_stream(request: Request):
     model = data.get("model")
     user_input = data.get("user_input")
     topic_id = data.get("topic_id", "default_topic")
-
+    files = data.get("files", [])
+    input_files = []
     agent = LangGraphAgent(model=model, topic_id=topic_id)
+    if files:
+        mcp_files_suffix = ["xlsx", "xls"]
+        for file in files:
+            if file.split(".")[-1] in mcp_files_suffix:
+                input_files.append(file.replace(oss_config.get("url") + "/" + oss_config.get("bucket_name") + "/mcp_file/", ""))
+            else:
+                input_files.append(file)
     
     # 转换为 SSE 格式的生成器
     async def sse_wrapper():
-        async for chunk in agent.astream_response(model, user_input):
+        async for chunk in agent.astream_response(model, user_input, input_files):
             # logger.info(chunk)
             yield f"data: {chunk}\n\n"
         
@@ -57,3 +68,50 @@ async def delete(topicId: str,db_client = Depends(Provide[Container.db_client]))
     await checkpointer.adelete_thread(topicId)
     affected_rows = db_client.execute_ddl('delete from ai_topic where id = :id', {'id': topicId})
     return {"success": affected_rows==1}
+
+@router.post("/{topicId}/upload")
+@inject
+async def upload_file(topicId: str, file: UploadFile = File(...), s3_client = Depends(Provide[Container.s3_client])):
+    """上传任意文件并保存到项目根下 files 目录 (不解析文件内容)。
+
+    返回 JSON:
+    {
+        filename: 原始文件名,
+        saved_as: 实际保存文件名,
+        size: 字节大小,
+        status: success
+    }
+    """
+    try:
+        if file is None:
+            raise HTTPException(status_code=400, detail="缺少文件字段 'file'")
+        
+        file_content = await file.read()
+        original_name = (file.filename or "unnamed").strip() or f"upload_{random_string(8)}"
+        safe_name = os.path.basename(original_name).replace("..", "_") or f"upload_{random_string(8)}"
+        safe_name = re.sub(r"\s+", "", safe_name)  # 去掉空格
+
+        name_root, ext = os.path.splitext(safe_name)
+        mime_type, _ = mimetypes.guess_type(file.filename)
+        logger.info(f"上传文件: original={original_name} safe_name={safe_name} mime_type={mime_type}")
+
+        s3_client.put_object(
+            Bucket=oss_config.get("bucket_name"),
+            Key=f"mcp_file/{topicId}/{safe_name}",
+            Body=file_content,
+            ContentType=mime_type or "application/octet-stream"
+        )
+
+        logger.info(f"保存上传文件: original={original_name} saved_as={safe_name} size={len(file_content)} bytes")
+        return {
+            "filename": original_name,
+            "saved_as": safe_name,
+            "size": len(file_content),
+            "status": "success",
+            "url": f"{oss_config.get('url')}/{oss_config.get('bucket_name')}/mcp_file/{topicId}/{safe_name}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("文件上传失败")
+        raise HTTPException(status_code=500, detail=f"上传失败: {e}")

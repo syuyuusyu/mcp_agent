@@ -1,3 +1,4 @@
+import boto3
 from dependency_injector import containers, providers
 from .utils.db_client import DbClient
 from .utils.db_pool import DbConnectionPool
@@ -30,6 +31,13 @@ class Container(containers.DeclarativeContainer):
         api_key=config.mcp_model.api_key,
         base_url=config.mcp_model.url,
         #extra_body={"enable_thinking": False}  # 禁用思考模式
+    )
+    s3_client = providers.Singleton(
+        boto3.client,
+        service_name='s3',
+        endpoint_url=config.oss.endpoint,
+        aws_access_key_id=config.oss.access_key,
+        aws_secret_access_key=config.oss.secret_key,
     )
 
 

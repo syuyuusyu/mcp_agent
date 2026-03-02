@@ -5,7 +5,6 @@ import os
 from ..utils import logger,random_string,load_config_yaml, repo_root
 
 import re
-import boto3
 
 from dependency_injector.wiring import Provide, inject
 from app.dependencies import Container
@@ -20,16 +19,10 @@ config = load_config_yaml("config.yaml")
 
 oss_config = config.get("oss",{})
 
-s3_client = boto3.client(
-    's3',
-    endpoint_url=oss_config.get("endpoint"),  # MinIO 端点
-    aws_access_key_id=oss_config.get("access-key"),
-    aws_secret_access_key=oss_config.get("secret-key"),
-)
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), s3_client = Provide[Container.s3_client]):
     """上传任意文件并保存到项目根下 files 目录 (不解析文件内容)。
 
     返回 JSON:
@@ -54,7 +47,7 @@ async def upload_file(file: UploadFile = File(...)):
         logger.info(f"上传文件: original={original_name} safe_name={safe_name} mime_type={mime_type}")
 
         upload = s3_client.put_object(
-            Bucket=oss_config.get("bucket-name"),
+            Bucket=oss_config.get("bucket_name"),
             Key="mcp_file/" + safe_name,
             Body=file_content,
             ContentType=mime_type or "application/octet-stream"

@@ -18,7 +18,8 @@ postgres:
   database: bqm
 
 oss:
+  url: http://www.51bqm.com:9001
   endpoint: http://www.51bqm.com:9000
-  access-key: admin
-  secret-key: n7d3t7x7
-  bucket-name: mcp
+  access_key: admin
+  secret_key: n7d3t7x7
+  bucket_name: mcp

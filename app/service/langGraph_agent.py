@@ -11,7 +11,8 @@ from typing import AsyncGenerator, Optional
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 import json
 from pathlib import Path
-from psycopg_pool import AsyncConnectionPool
+from psycopg import AsyncConnection
+from psycopg.rows import dict_row
 
 from skillkit import SkillManager
 from skillkit.integrations.langchain import create_langchain_tools
@@ -25,9 +26,18 @@ pg = config.get("postgres", {})
 mcp_model = config.get("mcp_model", {})
 
 default_system_prompt = """
-Before planning a step-by-step solution using raw database tools (like list_tables, execute_sql), 
+Before planning a step-by-step solution using mcp tools (like list_tables, execute_sql), 
 ALWAYS check if a specialized Skill tool exists for the user's request.
-If a Skill matches the intent (e.g. data fixing, specific report), use the Skill directly instead of manually querying the database."
+If a Skill matches the intent (e.g. data fixing, specific report), use the Skill directly instead of manually querying the database.
+
+When files are mentioned in the context:
+1. If a file has a URL: The file is accessible via network. However, you must first assess if you can process it based on:
+   - Your capabilities (e.g., do you support multimodal input for images/videos?)
+   - The file type (e.g., can you read Excel, PDF, etc.?)
+   If you cannot process it, inform the user that you lack the capability to handle that file type.
+   
+2. If a file has only a name (no URL): Select the appropriate mcp tool based on its file extension/type to access it.
+3. If there is no suitable mcp tool for the file type, inform the user that you cannot access that file.
 """
 
 
@@ -97,7 +107,7 @@ class LangGraphAgent:
     llm_map = {}
 
     checkpointer = None
-    _connection_pool = None  # 连接池
+    _connection = None  # 单个持久化连接（AsyncPostgresSaver 内部有 Lock 串行化）
 
     @classmethod
     def get_llm(cls, model:str):
@@ -105,22 +115,19 @@ class LangGraphAgent:
             # 如果是 deepseek 系列模型（通过名称判断），优先使用 ChatDeepSeek
             if "deepseek" in model.lower() or "r1" in model.lower():
                 cls.llm_map[model] = ChatDeepSeek(
-                    model=model, 
-                    api_key=mcp_model.get("api_key"), 
-                    api_base=mcp_model.get("url"), # ChatDeepSeek 使用 api_base
-                    model_kwargs={"extra_body": {"enable_search": True}} 
+                    model=model,
+                    api_key=mcp_model.get("api_key"),
+                    api_base=mcp_model.get("url"),  # ChatDeepSeek 使用 api_base
+                    extra_body={"enable_search": True},
                 )
             elif "qwen" in model.lower() or 'qwq' in model.lower():
                 try:
-                    # Qwen 系列模型建议使用 ChatTongyi (DashScope SDK)
-                    
+                    # Qwen 系列模型（包括 qwen3.5-plus 多模态模型）使用 ChatTongyi
                     cls.llm_map[model] = ChatTongyi(
                         model=model,
                         api_key=mcp_model.get("api_key"),
                         model_kwargs={
                             "enable_search": True
-                            # 或者如果是通过 OpenAI 兼容接口调用，则是：
-                            # "extra_body": {"enable_search": True} 
                         }
                     )
                 except ImportError:
@@ -129,7 +136,7 @@ class LangGraphAgent:
                         model=model, 
                         api_key=mcp_model.get("api_key"), 
                         base_url=mcp_model.get("url"),
-                        model_kwargs={"extra_body": {"enable_search": True}} # 开启联网搜索
+                        model_kwargs={"extra_body": {"enable_search": True}}
                     )
             else:
                 cls.llm_map[model] = ChatOpenAI(
@@ -163,76 +170,86 @@ class LangGraphAgent:
         return skill_tools
     
     @classmethod
-    async def _create_connection_pool(cls):
-        """创建并返回 PostgreSQL 异步连接池"""
-        if not cls._connection_pool:
+    async def _create_new_connection(cls):
+        """创建新的 PostgreSQL 异步连接"""
+        user = quote_plus(str(pg.get('user')))
+        password = quote_plus(str(pg.get('password')))
+        host = pg.get('host')
+        port = pg.get('port', 5432)
+        dbname = pg.get('database')
+        
+        connection_string = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+        conn = await AsyncConnection.connect(
+            connection_string,
+            autocommit=True,
+            prepare_threshold=0,
+            row_factory=dict_row,
+            keepalives=1,
+            keepalives_idle=60,
+            keepalives_interval=15,
+            keepalives_count=4,
+        )
+        logger.info("Successfully created PostgreSQL async connection")
+        return conn
+
+    @classmethod
+    async def _get_connection(cls):
+        """获取健康的 PostgreSQL 异步连接，断线自动重连"""
+        need_reconnect = False
+
+        if not cls._connection or cls._connection.closed:
+            need_reconnect = True
+        else:
+            # 主动检测连接是否存活（防止长时间待机后连接已被远端关闭）
             try:
-                # 对用户名和密码进行 URL 编码，防止特殊字符（如 @, :, /）破坏连接字符串格式
-                user = quote_plus(str(pg.get('user')))
-                password = quote_plus(str(pg.get('password')))
-                host = pg.get('host')
-                port = pg.get('port', 5432)
-                dbname = pg.get('database')
-                
-                connection_string = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
-                cls._connection_pool = AsyncConnectionPool(
-                    conninfo=connection_string,
-                    min_size=2,  # 最小连接数
-                    max_size=10,  # 最大连接数
-                    timeout=30,  # 获取连接超时时间(秒)
-                    max_idle=300,  # 连接最大闲置时间(秒)
-                    max_lifetime=3600,  # 连接最大生命周期(秒)
-                    open=False,  # 延迟打开，稍后调用 open()
-                    check=AsyncConnectionPool.check_connection,
-                    kwargs={
-                        "autocommit": True,
-                        "keepalives": 1,
-                        "keepalives_idle": 60,
-                        "keepalives_interval": 15,
-                        "keepalives_count": 4
-                    }
-                )
-                await cls._connection_pool.open()
-                logger.info("Successfully created PostgreSQL connection pool")
+                await cls._connection.execute("SELECT 1")
             except Exception as e:
-                logger.error(f"Failed to create PostgreSQL connection pool: {e}")
+                logger.warning(f"Connection health check failed ({e}), will reconnect...")
+                need_reconnect = True
+                try:
+                    await cls._connection.close()
+                except Exception:
+                    pass
+                cls._connection = None
+
+        if need_reconnect:
+            # 连接重建时同步清理 checkpointer 缓存（它内部持有旧连接引用）
+            cls.checkpointer = None
+            try:
+                cls._connection = await cls._create_new_connection()
+            except Exception as e:
+                logger.error(f"Failed to create PostgreSQL connection: {e}")
                 raise e
-        return cls._connection_pool
+
+        return cls._connection
 
     @classmethod
     async def aget_checkpointer(cls):
+        # _get_connection 会在断线重连时自动清除 cls.checkpointer
+        conn = await cls._get_connection()
         if not cls.checkpointer:
-            # 创建连接池
-            pool = await cls._create_connection_pool()
-            
             try:
-                # 直接使用连接池创建 AsyncPostgresSaver
-                # AsyncPostgresSaver 可以接受 AsyncConnectionPool 作为 conn 参数
-                cls.checkpointer = AsyncPostgresSaver(conn=pool)
-                
-                # 确保数据库表已创建
+                cls.checkpointer = AsyncPostgresSaver(conn=conn)
                 await cls.checkpointer.setup()
                 
-                logger.info("Successfully created AsyncPostgresSaver with connection pool and verified checkpointer tables.")
+                logger.info("Successfully created AsyncPostgresSaver with single connection.")
             except Exception as e:
-                logger.error(f"Failed to create checkpointer with connection pool: {e}")
+                logger.error(f"Failed to create checkpointer: {e}")
                 cls.checkpointer = None
                 raise e
         return cls.checkpointer
     
     @classmethod
-    async def close_connection_pool(cls):
-        """关闭连接池（用于应用关闭时清理资源）"""
-        # 清理 checkpointer
+    async def close_connection(cls):
+        """关闭连接（用于应用关闭时清理资源）"""
         if cls.checkpointer:
             cls.checkpointer = None
             logger.info("Checkpointer cleared")
         
-        # 关闭连接池
-        if cls._connection_pool:
-            await cls._connection_pool.close()
-            cls._connection_pool = None
-            logger.info("PostgreSQL connection pool closed")
+        if cls._connection and not cls._connection.closed:
+            await cls._connection.close()
+            cls._connection = None
+            logger.info("PostgreSQL connection closed")
     
 
     async def aget_history(self):
@@ -311,14 +328,26 @@ class LangGraphAgent:
             return obj
 
 
-    async def astream_response(self, model, user_input) -> AsyncGenerator[str, None]:
+    async def astream_response(self, model, user_input, files=[]) -> AsyncGenerator[str, None]:
         """使用事件处理器分离不同类型事件的逻辑"""
         
         self.model = model
         agent_executor = await self.aget_agent_executor()
-        config = {"configurable": {"thread_id": self.topic_id}}
-    
-
+        config = {
+            "configurable": {"thread_id": self.topic_id},
+            "recursion_limit": 50  # 将限制增加到 50 或更高
+        }
+        
+        # 构造初始消息，仅通知模型有哪些文件可用（不尝试让模型从 URL 加载）
+        message_content = []
+        img_files = [f for f in files if f.split(".")[-1].lower() in ["jpg", "jpeg", "png", "gif"]]
+        other_files = [f for f in files if f.split(".")[-1].lower() not in ["jpg", "jpeg", "png", "gif"]]
+        if img_files:
+            message_content = [{"image": f} for f in img_files] + [{"text": user_input}]
+        if other_files:
+            message_content = user_input + "\n\nAvailable files:\n" + "\n".join(other_files)
+        if not message_content:
+            message_content = user_input
         event_count = 0
         graph_completed = False
         last_event = None
@@ -332,8 +361,10 @@ class LangGraphAgent:
         }
         
         try:
-            async for event in agent_executor.astream_events(
-                {"messages": [HumanMessage(content=user_input)]},
+            async for event in agent_executor.astream_events(    
+                {
+                    "messages": [HumanMessage(content=message_content)]
+                },
                 config=config,
                 version="v2"
             ):

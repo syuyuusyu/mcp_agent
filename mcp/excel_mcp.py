@@ -19,15 +19,15 @@ oss_config = config.get("oss",{})
 s3_client = boto3.client(
     's3',
     endpoint_url=oss_config.get("endpoint"),  # MinIO 端点
-    aws_access_key_id=oss_config.get("access-key"),
-    aws_secret_access_key=oss_config.get("secret-key"),
+    aws_access_key_id=oss_config.get("access_key"),
+    aws_secret_access_key=oss_config.get("secret_key"),
 )
 
 def get_file_stream_from_s3(file_name: str) -> io.BytesIO:
     """从 S3 获取文件并返回字节流"""
     try:
         response = s3_client.get_object(
-            Bucket=oss_config.get("bucket-name"),
+            Bucket=oss_config.get("bucket_name"),
             Key=f"mcp_file/{file_name}"
         )
         file_content = response['Body'].read()
@@ -123,7 +123,7 @@ def write_sheet_data(file_name: str, sheetName: str, data: list[list]) -> bool:
         try:
             file_stream = get_file_stream_from_s3(file_name)
             workbook = openpyxl.load_workbook(file_stream)
-        except:
+        except Exception:
             workbook = openpyxl.Workbook()
         
         # 创建或获取工作表
@@ -174,7 +174,7 @@ def write_sheet_formula(file_name: str, sheetName: str, formulas: list[list[str]
         try:
             file_stream = get_file_stream_from_s3(file_name)
             workbook = openpyxl.load_workbook(file_stream)
-        except:
+        except Exception:
             workbook = openpyxl.Workbook()
         
         # 创建或获取工作表
