@@ -3,6 +3,7 @@ mcp_model:
   api_key: sk-fadb6690a1144f16b9212266a4e2d666
   url: https://dashscope.aliyuncs.com/compatible-mode/v1
   model: deepseek-v3.2
+  skills_path: skills_bqm
 datasource:
   host: 49.4.55.222
   port: 3306

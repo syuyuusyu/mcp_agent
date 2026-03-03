@@ -127,7 +127,7 @@ class LangGraphAgent:
                         model=model,
                         api_key=mcp_model.get("api_key"),
                         model_kwargs={
-                            "enable_search": True
+                            "enable_search": True,
                         }
                     )
                 except ImportError:
@@ -136,7 +136,6 @@ class LangGraphAgent:
                         model=model, 
                         api_key=mcp_model.get("api_key"), 
                         base_url=mcp_model.get("url"),
-                        model_kwargs={"extra_body": {"enable_search": True}}
                     )
             else:
                 cls.llm_map[model] = ChatOpenAI(
@@ -164,7 +163,7 @@ class LangGraphAgent:
         return list(tool_map.values())
     
     async def get_skills_tools(self):
-        manager = SkillManager(project_skill_dir=Path(repo_root()) / "skills")
+        manager = SkillManager(project_skill_dir=Path(repo_root()) / mcp_model.get("skills_path", "skills"))
         await manager.adiscover()
         skill_tools = create_langchain_tools(manager)
         return skill_tools
