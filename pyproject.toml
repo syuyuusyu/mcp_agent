@@ -29,4 +29,5 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "uvicorn[standard]>=0.36.0",
     "langchain-deepseek",
+    "langchain-ollama>=1.0.1",
 ]

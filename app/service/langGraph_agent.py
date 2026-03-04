@@ -4,6 +4,7 @@ from ..utils import logger,load_config_yaml,repo_root
 from langchain_openai import ChatOpenAI
 from langchain_deepseek import ChatDeepSeek
 from langchain_community.chat_models import ChatTongyi
+from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent ,ToolNode # type: ignore
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
@@ -113,7 +114,13 @@ class LangGraphAgent:
     def get_llm(cls, model:str):
         if not cls.llm_map.get(model):
             # 如果是 deepseek 系列模型（通过名称判断），优先使用 ChatDeepSeek
-            if "deepseek" in model.lower() or "r1" in model.lower():
+            if model.lower() in ["qwen3.5:27b"]:
+                cls.llm_map[model] = ChatOllama(
+                    model=model,
+                    api_key="fake",
+                    base_url="http://localhost:11434",
+                )
+            elif "deepseek" in model.lower() or "r1" in model.lower():
                 cls.llm_map[model] = ChatDeepSeek(
                     model=model,
                     api_key=mcp_model.get("api_key"),
@@ -126,9 +133,11 @@ class LangGraphAgent:
                     cls.llm_map[model] = ChatTongyi(
                         model=model,
                         api_key=mcp_model.get("api_key"),
+
                         model_kwargs={
                             "enable_search": True,
-                        }
+                        },
+                        streaming=True,
                     )
                 except ImportError:
                     logger.warning("Install 'dashscope' and 'langchain-community' to use ChatTongyi. Falling back to ChatOpenAI.")
@@ -270,7 +279,7 @@ class LangGraphAgent:
         tool_node = ToolNode(tools, handle_tool_errors=True)
         if self.approvalMode == ApprovalMode.AUTO:
             return create_react_agent(self.get_llm(self.model),
-                                                tool_node, # 传入 ToolNode 而不是 tools 列表
+                                                tools=tool_node, # 传入 ToolNode 而不是 tools 列表
                                                 prompt=self.system_prompt, 
                                                 checkpointer=cp)
         if self.approvalMode == ApprovalMode.ALWAYS:
@@ -329,7 +338,6 @@ class LangGraphAgent:
 
     async def astream_response(self, model, user_input, files=[]) -> AsyncGenerator[str, None]:
         """使用事件处理器分离不同类型事件的逻辑"""
-        
         self.model = model
         agent_executor = await self.aget_agent_executor()
         config = {
@@ -341,12 +349,20 @@ class LangGraphAgent:
         message_content = []
         img_files = [f for f in files if f.split(".")[-1].lower() in ["jpg", "jpeg", "png", "gif"]]
         other_files = [f for f in files if f.split(".")[-1].lower() not in ["jpg", "jpeg", "png", "gif"]]
-        if img_files:
+        
+        # ChatTongyi/Qwen 支持多模态（text+image混合），ChatOllama 不支持
+        if img_files and ("qwen" in model.lower() or "qwq" in model.lower()):
+            # 仅对 ChatTongyi 使用混合格式
             message_content = [{"image": f} for f in img_files] + [{"text": user_input}]
-        if other_files:
-            message_content = user_input + "\n\nAvailable files:\n" + "\n".join(other_files)
-        if not message_content:
+        else:
+            # ChatOllama 等模型：只使用文本形式，提及图像文件
             message_content = user_input
+            if img_files:
+                message_content += f"\n\nAvailable images:\n" + "\n".join(img_files)
+        
+        # 添加其他文件信息
+        if other_files:
+            message_content += f"\n\nAvailable files:\n" + "\n".join(other_files)
         event_count = 0
         graph_completed = False
         last_event = None
