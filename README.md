@@ -164,5 +164,44 @@ PY
 | pandas 安装慢 | 缺少缓存 | 镜像构建层缓存会加速第二次构建 |
 | 需要连接数据库超时 | 未配置环境变量 / 网络策略 | 设定正确的 `config.yaml` 外挂目录 |
 
+## 同步目录到服务器
+
+你说的 `synscp` 大概率是 `rsync` 或 `scp`。
+
+推荐使用 `rsync`（可增量同步，支持排除文件）：
+
+```bash
+# 场景 A：同步“用于 docker build 的项目目录”到远程（与 Dockerfile 对齐）
+# Dockerfile 构建会用到：app/ mcp/ skills_bqm/ main.py pyproject.toml uv.lock config.yaml mcp.yaml
+rsync -avz --delete \
+	--exclude ".git" \
+	--exclude "__pycache__" \
+	--exclude "cache" \
+	--exclude "logs" \
+	--exclude "files" \
+	--exclude ".venv" \
+	./ syu@74.48.18.221:/home/syu/project/mcp_agent
+```
+
+如果你只想同步 Docker 运行时外挂配置（对应 `-v <dir>:/app/config_ext`）：
+
+```bash
+# 场景 B：仅同步配置目录（建议单独目录，只放 config.yaml / workflow.yaml / mcp.yaml）
+rsync -avz --delete \
+	./config_ext/ syu@221.213.109.204:/home/syu/project/mcp_agent/config_ext/
+```
+
+如果服务器 SSH 端口不是 22：
+
+```bash
+rsync -avz -e "ssh -p 2222" ./ user@your-server:/path/to/mcp_agent/
+```
+
+简单备选（整目录复制）：
+
+```bash
+scp -r ./ user@your-server:/path/to/mcp_agent/
+```
+
 
 

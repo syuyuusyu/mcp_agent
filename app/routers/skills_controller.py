@@ -24,19 +24,14 @@ async def chat_stream(request: Request):
     user_input = data.get("user_input")
     topic_id = data.get("topic_id", "default_topic")
     files = data.get("files", [])
-    input_files = []
     agent = LangGraphAgent(model=model, topic_id=topic_id)
-    if files:
-        mcp_files_suffix = ["xlsx", "xls"]
-        for file in files:
-            if file.split(".")[-1] in mcp_files_suffix:
-                input_files.append(file.replace(oss_config.get("url") + "/" + oss_config.get("bucket_name") + "/mcp_file/", ""))
-            else:
-                input_files.append(file)
+
+    access_token = request.headers.get("access_token", "")
+    print(f"Received access_token: {access_token}")  # 调试输出，确认是否正确接收了 access_token
     
     # 转换为 SSE 格式的生成器
     async def sse_wrapper():
-        async for chunk in agent.astream_response(model, user_input, input_files):
+        async for chunk in agent.astream_response(model, user_input, files,access_token):
             # logger.info(chunk)
             yield f"data: {chunk}\n\n"
         
@@ -63,7 +58,7 @@ async def delete(topicId: str,db_client = Depends(Provide[Container.db_client]))
     topic_count_list = db_client.query(f"select count(1) count from ai_topic where user_id = '{user_id}'")
     toppic_count = topic_count_list[0]['count'] if topic_count_list else 0
     if toppic_count <= 1:
-        return {"success": False, "message": "没有多余的主题可以删除"}
+        return {"success": False, "error": "没有多余的主题可以删除"}
     checkpointer = await LangGraphAgent.aget_checkpointer()
     await checkpointer.adelete_thread(topicId)
     affected_rows = db_client.execute_ddl('delete from ai_topic where id = :id', {'id': topicId})

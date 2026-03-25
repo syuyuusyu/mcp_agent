@@ -5,11 +5,10 @@ from langchain_openai import ChatOpenAI
 from langchain_deepseek import ChatDeepSeek
 from langchain_community.chat_models import ChatTongyi
 from langchain_ollama import ChatOllama
+from langchain_anthropic import ChatAnthropic
 from langgraph.prebuilt import create_react_agent ,ToolNode # type: ignore
-from langgraph.graph import StateGraph, START, END
-from langgraph.types import interrupt
-from typing import AsyncGenerator, Optional
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from typing import AsyncGenerator
+from langchain_core.messages import HumanMessage
 import json
 from pathlib import Path
 from psycopg import AsyncConnection
@@ -25,6 +24,10 @@ from urllib.parse import quote_plus
 config = load_config_yaml("config.yaml")
 pg = config.get("postgres", {})
 mcp_model = config.get("mcp_model", {})
+oss_config = config.get("oss",{})
+
+compatible_model_map = mcp_model.get("compatible_model_map", {})
+compatible_url = mcp_model.get("compatible_url")
 
 default_system_prompt = """
 Before planning a step-by-step solution using mcp tools (like list_tables, execute_sql), 
@@ -41,68 +44,6 @@ When files are mentioned in the context:
 3. If there is no suitable mcp tool for the file type, inform the user that you cannot access that file.
 """
 
-
-def approval_node(state):
-    """
-    Pause execution to request user approval before proceeding.
-    The decision is stored back into state for downstream nodes.
-    """
-    decision = interrupt({"type": "approval_required"})
-    if isinstance(state, dict):
-        updated_state = dict(state)
-        updated_state["approval_decision"] = decision
-        return updated_state
-    return {"state": state, "approval_decision": decision}
-
-
-def should_continue(state):
-    """
-    Determine if we should proceed to approval (and then tools) or end.
-    """
-    messages = state.get("messages", [])
-    if not messages:
-        return END
-    last_message = messages[-1]
-    # If there are no tool calls, we finish
-    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
-        return END
-    return "approval"
-
-
-def check_approval(state):
-    """
-    Check the approval decision.
-    """
-    decision = state.get("approval_decision")
-    # You might want to support more complex payloads, 
-    # but strictly checking "approve" is a good safe default.
-    if decision == "approve":
-        return "tools"
-    # If rejected, we end the turn (or potentially feedback to agent)
-    return END
-
-
-def build_agent_node(llm, system_prompt: Optional[str] = None):
-    """
-    Create an agent node that calls the LLM and appends the response
-    to state["messages"].
-    """
-    async def agent_node(state):
-        messages = list(state.get("messages", [])) if isinstance(state, dict) else []
-        if system_prompt:
-            if not messages or not isinstance(messages[0], SystemMessage) or messages[0].content != system_prompt:
-                messages = [SystemMessage(content=system_prompt)] + messages
-
-        response = await llm.ainvoke(messages)
-
-        updated_state = dict(state) if isinstance(state, dict) else {}
-        updated_messages = list(updated_state.get("messages", []))
-        updated_messages.append(response)
-        updated_state["messages"] = updated_messages
-        return updated_state
-
-    return agent_node
-
 class LangGraphAgent:
 
     llm_map = {}
@@ -114,11 +55,17 @@ class LangGraphAgent:
     def get_llm(cls, model:str):
         if not cls.llm_map.get(model):
             # 如果是 deepseek 系列模型（通过名称判断），优先使用 ChatDeepSeek
-            if model.lower() in ["qwen3.5:27b"]:
+            if model.lower() in ["qwen3.5:27b", "qwen3.5:9b"]:
                 cls.llm_map[model] = ChatOllama(
                     model=model,
                     api_key="fake",
                     base_url="http://localhost:11434",
+                )
+            elif "mlx" == model:
+                cls.llm_map[model] = ChatOpenAI(
+                    model="mlx-community/DeepSeek-R1-Distill-Qwen-14B",
+                    api_key="fake",
+                    base_url="http://localhost:8080/v1",
                 )
             elif "deepseek" in model.lower() or "r1" in model.lower():
                 cls.llm_map[model] = ChatDeepSeek(
@@ -127,13 +74,19 @@ class LangGraphAgent:
                     api_base=mcp_model.get("url"),  # ChatDeepSeek 使用 api_base
                     extra_body={"enable_search": True},
                 )
+            elif "MiniMax" in model or "anthropic" in model.lower():
+                cls.llm_map[model] = ChatAnthropic(
+                    model=model,
+                    api_key="sk-api-5reu6GXwP63dUj6O2qbpBKbs7Lq7tf_8owUIGHIBgK7U_ELcyLesJFMnATXY3U8oU2akamuIz--GfXOrPCpurazV_SOGJpUBDhLW9iU8x8APaBfcIDHlQYs",
+                    base_url="https://api.minimaxi.com/anthropic",
+                    #base_url = "https://api.minimaxi.com/v1"
+                )
             elif "qwen" in model.lower() or 'qwq' in model.lower():
                 try:
                     # Qwen 系列模型（包括 qwen3.5-plus 多模态模型）使用 ChatTongyi
                     cls.llm_map[model] = ChatTongyi(
                         model=model,
                         api_key=mcp_model.get("api_key"),
-
                         model_kwargs={
                             "enable_search": True,
                         },
@@ -155,12 +108,25 @@ class LangGraphAgent:
         kknd = cls.llm_map[model]
         logger.info(f"Using LLM for model '{model}': {kknd.__class__.__name__}")
         return kknd
+    
+    @classmethod
+    def get_compatible_llm(cls, model:str):
+        sub_url = compatible_model_map.get(model)
+        if not cls.llm_map.get(model):
+            cls.llm_map[model] = ChatDeepSeek(
+                model=model, 
+                api_key="fake", 
+                api_base=f"{compatible_url}/deepseek/{sub_url}/v1"
+            )
+        return cls.llm_map[model]
 
-    def __init__(self,model:str,topic_id:str,system_prompt:str=default_system_prompt,approvalMode:ApprovalMode = ApprovalMode.AUTO):
+
+
+    def __init__(self,model:str,topic_id:str,approvalMode:ApprovalMode = ApprovalMode.AUTO):
         self.topic_id = topic_id
-        self.system_prompt = system_prompt
         self.model = model
         self.approvalMode = approvalMode
+        self.model_class = ""
 
     def get_mcp_tools(self):
         tool_names = getattr(mcp, "__all__", []) 
@@ -265,10 +231,15 @@ class LangGraphAgent:
         config = {"configurable": {"thread_id": self.topic_id}}
         state = await agent_executor.aget_state(config)
         # state.values is a dict, typically containing 'messages'
-        return state.values.get("messages", [])
+        messages = state.values.get("messages", [])
+        serialized_messages = [self._serialize_langchain_object(item) for item in messages]
+        return [
+            self._normalize_reasoning_content(item) if isinstance(item, dict) else item
+            for item in serialized_messages
+        ]
 
 
-    async def aget_agent_executor(self):
+    async def aget_agent_executor(self,system_prompt = default_system_prompt):
         cp = await self.aget_checkpointer()
         skill_tools = await self.get_skills_tools()
         logger.info(f"Discovered {len(skill_tools)} skill tools: {[tool.name for tool in skill_tools]}")
@@ -277,46 +248,12 @@ class LangGraphAgent:
         # 手动创建 ToolNode 并开启错误处理
         # handle_tool_errors=True 会将错误信息作为观察结果返回给大模型，让它决定如何处理（例如重试）
         tool_node = ToolNode(tools, handle_tool_errors=True)
-        if self.approvalMode == ApprovalMode.AUTO:
-            return create_react_agent(self.get_llm(self.model),
-                                                tools=tool_node, # 传入 ToolNode 而不是 tools 列表
-                                                prompt=self.system_prompt, 
-                                                checkpointer=cp)
-        if self.approvalMode == ApprovalMode.ALWAYS:
-            return self._create_agent_with_approval_node(
-                build_agent_node(self.get_llm(self.model), self.system_prompt), 
-                tool_node, 
-                cp
-            )
-    def _create_agent_with_approval_node(self, agent_node, tool_node, cp):
-        graph = StateGraph(dict)
-        graph.add_node("agent", agent_node)
-        graph.add_node("approval", approval_node)  # 新增
-        graph.add_node("tools", tool_node)
-        
-        graph.add_edge(START, "agent")
-        
-        # Replace unconditional edges with conditional logic
-        
-        # 1. Agent -> Approval (only if tools calls exist)
-        graph.add_conditional_edges(
-            "agent",
-            should_continue,
-            ["approval", END]
-        )
-        
-        # 2. Approval -> Tools (only if approved)
-        graph.add_conditional_edges(
-            "approval", 
-            check_approval, 
-            ["tools", END]
-        )
-        
-        graph.add_edge("tools", "agent")
-        # graph.add_edge("agent", END) # Removed as implicit in conditional
-        
-        return graph.compile(checkpointer=cp)
-
+        #TODO
+        llm = self.get_compatible_llm(self.model)
+        self.model_class = llm.__class__.__name__
+        return create_react_agent(llm,tools=tool_node, # 传入 ToolNode 而不是 tools 列表
+                                        prompt=system_prompt, 
+                                        checkpointer=cp)
 
     def _serialize_langchain_object(self, obj):
         """递归将 LangChain 对象转换为可 JSON 序列化的格式"""
@@ -335,45 +272,109 @@ class LangGraphAgent:
         else:
             return obj
 
+    def _normalize_reasoning_content(self, message):
+        """统一思考字段到 additional_kwargs.reasoning_content。"""
+        if message.get("type") != "ai":
+            return message
 
-    async def astream_response(self, model, user_input, files=[]) -> AsyncGenerator[str, None]:
-        """使用事件处理器分离不同类型事件的逻辑"""
+        additional_kwargs = message.get("additional_kwargs")
+        if not isinstance(additional_kwargs, dict):
+            additional_kwargs = {}
+            message["additional_kwargs"] = additional_kwargs
+
+        content = message.get("content")
+
+        # 按需求：<think>...</think> 的字符串形式保持原样，不做改动
+        if isinstance(content, str):
+            return message
+
+        # Anthropic 等模型会返回结构化 thinking block，提取并统一到 reasoning_content
+        if isinstance(content, list):
+            reasoning_parts = []
+            text_parts = []
+            filtered_content = []
+            has_tool_use = False
+
+            for block in content:
+                if not isinstance(block, dict):
+                    filtered_content.append(block)
+                    continue
+
+                if block.get("type") == "thinking":
+                    thinking_text = block.get("thinking") or block.get("text")
+                    if isinstance(thinking_text, str) and thinking_text.strip():
+                        reasoning_parts.append(thinking_text.strip())
+                elif block.get("type") == "text":
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        text_parts.append(text)
+                    filtered_content.append(block)
+                elif block.get("type") == "tool_use":
+                    has_tool_use = True
+                else:
+                    filtered_content.append(block)
+
+            if reasoning_parts:
+                existing_reasoning = additional_kwargs.get("reasoning_content")
+                joined_reasoning = "\n".join(reasoning_parts)
+                if isinstance(existing_reasoning, str) and existing_reasoning.strip():
+                    additional_kwargs["reasoning_content"] = existing_reasoning
+                else:
+                    additional_kwargs["reasoning_content"] = joined_reasoning
+
+            if text_parts:
+                message["content"] = "".join(text_parts)
+            elif has_tool_use:
+                message["content"] = "tool calling..."
+            else:
+                message["content"] = filtered_content
+
+        return message
+
+    def _message_content(self, user_input, files):
+        mcp_files_suffix = ["xlsx", "xls"]
+        img_suffix = ["jpg", "jpeg", "png", "gif"]
+        message_content = []
+        
+        # 所有处理文件的的CMP工具都默认从 S3 获取文件，文件名为 http(s)://{oss_config.url}/{oss_config.bucket_name}/mcp_file/{file_name}，模型只需要传入文件名，工具会自动构造完整路径访问文件
+        prefix = f"{oss_config.get('url')}/{oss_config.get('bucket_name')}/mcp_file/"
+        cleaned_files = []
+        for file in files:
+            if file.split(".")[-1] in mcp_files_suffix:
+                cleaned_files.append(file.replace(prefix, ""))
+            else:
+                cleaned_files.append(file)
+        files = cleaned_files
+
+        img_files = [f for f in files if f.split(".")[-1].lower() in img_suffix]
+        other_files = [f for f in files if f.split(".")[-1].lower() not in img_suffix]
+        if img_files:
+            message_content = [{"image": f} for f in img_files] + [{"text": user_input}]
+        if other_files:
+            message_content = user_input + "\n\nAvailable files:\n" + "\n".join(other_files)
+        if not message_content:
+            message_content = user_input
+        return message_content
+
+    async def astream_response(self, model, user_input, files=[],access_token = "") -> AsyncGenerator[str, None]:
+        """流式返回 LangGraph 事件。"""
+        # model = "qwen3.5:27b" 
+        # model = "qwen3.5:9b"
+        #model = "mlx"
+        #model = "MiniMax-M2.5-highspeed"
         self.model = model
-        agent_executor = await self.aget_agent_executor()
+        system_prompt = default_system_prompt + "\n\n"
+        if access_token:
+            system_prompt += f"\n\naccess_token: {access_token}\n (Note: access_token 用来调用其他的系统接口或者mcp方法,模型无需理解它的具体含义和格式,只需在需要时原样使用即可。请妥善保存)"
+        agent_executor = await self.aget_agent_executor(system_prompt=system_prompt)
         config = {
             "configurable": {"thread_id": self.topic_id},
             "recursion_limit": 50  # 将限制增加到 50 或更高
         }
-        
-        # 构造初始消息，仅通知模型有哪些文件可用（不尝试让模型从 URL 加载）
-        message_content = []
-        img_files = [f for f in files if f.split(".")[-1].lower() in ["jpg", "jpeg", "png", "gif"]]
-        other_files = [f for f in files if f.split(".")[-1].lower() not in ["jpg", "jpeg", "png", "gif"]]
-        
-        # ChatTongyi/Qwen 支持多模态（text+image混合），ChatOllama 不支持
-        if img_files and ("qwen" in model.lower() or "qwq" in model.lower()):
-            # 仅对 ChatTongyi 使用混合格式
-            message_content = [{"image": f} for f in img_files] + [{"text": user_input}]
-        else:
-            # ChatOllama 等模型：只使用文本形式，提及图像文件
-            message_content = user_input
-            if img_files:
-                message_content += f"\n\nAvailable images:\n" + "\n".join(img_files)
-        
-        # 添加其他文件信息
-        if other_files:
-            message_content += f"\n\nAvailable files:\n" + "\n".join(other_files)
+
+        message_content = self._message_content(user_input, files)
         event_count = 0
-        graph_completed = False
         last_event = None
-        
-        # 定义事件处理器
-        handlers = {
-            "on_tool_start": self._handle_tool_start,
-            "on_tool_end": self._handle_tool_end,
-            "on_chain_end": self._handle_chain_end,
-            "on_approval_required": self._handle_approval,
-        }
         
         try:
             async for event in agent_executor.astream_events(    
@@ -391,22 +392,15 @@ class LangGraphAgent:
                 serialized_event = self._serialize_langchain_object(event)
                 serialized_event.setdefault("metadata", {})
                 serialized_event["metadata"]["event_index"] = event_count
-                #print(serialized_event)
+
+                if kind == "on_chat_model_stream":
+                    self._normalize_stream_chunk(serialized_event)
                 
-                # 调用对应的处理器
-                handler = handlers.get(kind, self._handle_default_event)
-                event_output = handler(
-                    serialized_event, 
-                    graph_completed
-                )
-                
-                # 更新状态
-                graph_completed = event_output.get("graph_completed", graph_completed)
-                
-                # 判断是否需要 yield
-                if event_output.get("should_yield", True):
-                    yield json.dumps(event_output["data"], ensure_ascii=False, default=str)
-                logger.info(f"Event: {kind}, Graph Completed: {graph_completed}, Event Index: {event_count}")
+                if kind == "on_chain_start":
+                    self._normalize_chain_start_event(serialized_event)
+
+                yield json.dumps(serialized_event, ensure_ascii=False, default=str)
+                logger.info(f"Event: {kind}, Event Index: {event_count}")
             
             # 流结束后的处理
             #if graph_completed:
@@ -442,61 +436,69 @@ class LangGraphAgent:
                 "metadata": {"thread_id": self.topic_id, "is_final_event": True}
             }, ensure_ascii=False)
 
-    # 各个事件处理器
-    def _handle_tool_start(self, event, graph_completed):
-        """处理工具启动事件"""
-        
-        return {
-            "data": event,
-            "graph_completed": graph_completed,
-            "should_yield": True
-        }
+    def _normalize_stream_chunk(self, event):
+        """将 on_chat_model_stream chunk 里的结构化 thinking block 统一到 additional_kwargs.reasoning_content。"""
+        chunk = event.get("data", {}).get("chunk")
+        if not isinstance(chunk, dict):
+            return
 
-    def _handle_tool_end(self, event, graph_completed):
-        """处理工具结束事件"""
-        
-        return {
-            "data": event,
-            "graph_completed": graph_completed,
-            "should_yield": True
-        }
+        content = chunk.get("content")
+        if not isinstance(content, list):
+            return
 
-    def _handle_chain_end(self, event, graph_completed):
-        """处理链结束事件"""
-        metadata = event.get("metadata", {})
-        langgraph_node = metadata.get("langgraph_node")
-        remaining_steps = event.get("data", {}).get("remaining_steps", 99)
-        
-        # 检查是否是最终的完成
-        if (langgraph_node == "agent" and 
-            remaining_steps == 0):
-            graph_completed = True
-        
-        return {
-            "data": event,
-            "graph_completed": graph_completed,
-            "should_yield": True
-        }
+        additional_kwargs = chunk.get("additional_kwargs")
+        if not isinstance(additional_kwargs, dict):
+            additional_kwargs = {}
+            chunk["additional_kwargs"] = additional_kwargs
 
-    def _handle_approval(self, event, graph_completed):
-        """处理审批事件（需要前端确认时）"""
-        # 这种事件通常需要特殊处理，可能不立即 yield
-        approval_data = event.get("data", {})
-        
-        logger.info(f"Approval required for: {approval_data}")
-        
-        return {
-            "data": event,
-            "graph_completed": graph_completed,
-            "should_yield": True
-        }
+        reasoning_parts = []
+        text_parts = []
 
-    def _handle_default_event(self, event, graph_completed):
-        """默认事件处理"""
-        return {
-            "data": event,
-            "graph_completed": graph_completed,
-            "should_yield": True
-        }
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "thinking":
+                thinking_text = block.get("thinking")
+                if isinstance(thinking_text, str) and thinking_text:
+                    reasoning_parts.append(thinking_text)
+            elif block.get("type") == "text":
+                text = block.get("text", "")
+                if isinstance(text, str):
+                    text_parts.append(text)
+
+        if reasoning_parts:
+            additional_kwargs["reasoning_content"] = "".join(reasoning_parts)
+
+        chunk["content"] = "".join(text_parts)
+
+    def _normalize_chain_start_event(self, event):
+        """标准化 on_chain_start 中 tool_call_with_context 的 state.messages。"""
+        data = event.get("data")
+        if not isinstance(data, dict):
+            return
+
+        input_data = data.get("input")
+        if not isinstance(input_data, dict):
+            return
+
+        if input_data.get("__type") != "tool_call_with_context":
+            return
+
+        state = input_data.get("state")
+        if not isinstance(state, dict):
+            return
+
+        messages = state.get("messages")
+        if not isinstance(messages, list):
+            return
+
+        normalized_messages = []
+        for message in messages:
+            if isinstance(message, dict):
+                normalized_messages.append(self._normalize_reasoning_content(message))
+            else:
+                normalized_messages.append(message)
+
+        state["messages"] = normalized_messages
 
 

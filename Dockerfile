@@ -35,7 +35,7 @@ RUN find .venv/lib/python3.11/site-packages -type d \( -name tests -o -name test
 
 COPY app app
 COPY mcp mcp
-COPY skills skills
+COPY skills_bqm skills
 COPY main.py .
 
 # Prune project caches to reduce final size
