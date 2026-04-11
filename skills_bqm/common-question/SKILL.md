@@ -1,5 +1,5 @@
 ---
-name: common_question
+name: common-question
 description: 【SOP标准流程】当前流程用来维护表 `common_question` 中的数据，当用户给出一些问题和答案时，使用此工具来更新数据库中的相关记录。 当用户输入包含 "维护常见问题" 时，必须优先使用此工具。此工具内部已封装了完整的数据库查询和更新逻辑，不要手动调用 `execute_sql` 或 `list_tables` 去重新探索。
 metadata:
   required_skills:

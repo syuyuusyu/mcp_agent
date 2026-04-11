@@ -4,6 +4,16 @@ mcp_model:
   url: https://dashscope.aliyuncs.com/compatible-mode/v1
   model: deepseek-v3.2
   skills_path: skills
+  compatible_url: https://www.ufoyy.top:7022/stream
+  compatible_model_map:
+    deepseek-v3.2: from_ali_nothinking
+    deepseek-r1: from_ali
+    qwen-max-latest: from_ali
+    qwen3.5-plus: from_ali
+    qwen3-235b-a22b: from_ali
+    MiniMax-M2.5: from_ali
+    glm-5: from_ali
+    kimi-k2.5: from_ali
 datasource:
   host: 74.48.18.221
   port: 3306
@@ -19,7 +29,7 @@ postgres:
   database: app
 
 oss:
-  endpoint: http://www.51bqm.com:9000
+  endpoint: https://www.ufoyy.top:9000
   access-key: admin
   secret-key: n7d3t7x7
   bucket-name: mcp

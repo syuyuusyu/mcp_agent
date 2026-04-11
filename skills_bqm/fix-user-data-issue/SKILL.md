@@ -1,5 +1,5 @@
 ---
-name: fix_user_data_issue
+name: fix-user-data-issue
 description: 【SOP标准流程】通过手机号梳理并调整用户数据，当用户输入包含手机号和 "处理｜查看用户数据"、"处理｜查看用户"、"查看用户信息" 时，必须优先使用此工具。此工具内部已封装了完整的数据库查询和删除逻辑，不要手动调用 `execute_sql` 或 `list_tables` 去重新探索。
 metadata:
   required_skills:

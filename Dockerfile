@@ -51,7 +51,7 @@ WORKDIR /app
 # Optional prune of manpages / locales / docs to save space
 RUN rm -rf /usr/share/man/* /usr/share/doc/* /usr/share/locale/* /var/lib/apt/lists/* || true
 # Install util-linux for nsenter to allow host command execution
-RUN apt-get update && apt-get install -y util-linux && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y util-linux curl && rm -rf /var/lib/apt/lists/*
 
 # Copy trimmed virtualenv and only the necessary application files
 # COPY --from=builder /app/.venv /app/.venv     <-- 注释掉旧的

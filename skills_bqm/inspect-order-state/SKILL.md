@@ -1,5 +1,5 @@
 ---
-name : inspect_order_state
+name : inspect-order-state
 description: 【环境上下文】提供订单状态查询的操作指南和数据库结构说明。当用户询问订单状态、订单详情或相关问题时，加载此信息以获取查询订单状态的正确流程和数据库表结构知识。
 metadata:
   required_skills:

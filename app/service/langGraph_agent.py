@@ -1,3 +1,12 @@
+try:
+    from warnings import deprecated
+except ImportError:
+    def deprecated(*args, **kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
 import mcp
 from langchain_core.tools import BaseTool
 from ..utils import logger,load_config_yaml,repo_root
@@ -52,6 +61,7 @@ class LangGraphAgent:
     _connection = None  # 单个持久化连接（AsyncPostgresSaver 内部有 Lock 串行化）
 
     @classmethod
+    @deprecated(reason="Use get_compatible_llm instead, which routes to the appropriate LLM based on the compatible_model_map configuration.")
     def get_llm(cls, model:str):
         if not cls.llm_map.get(model):
             # 如果是 deepseek 系列模型（通过名称判断），优先使用 ChatDeepSeek
@@ -113,11 +123,20 @@ class LangGraphAgent:
     def get_compatible_llm(cls, model:str):
         sub_url = compatible_model_map.get(model)
         if not cls.llm_map.get(model):
-            cls.llm_map[model] = ChatDeepSeek(
-                model=model, 
-                api_key="fake", 
-                api_base=f"{compatible_url}/deepseek/{sub_url}/v1"
-            )
+            if model == "qwen3.5:27b" or model == "qwen3.5:9b":
+                cls.llm_map[model] = ChatOllama(
+                    model=model,
+                    api_key="fake",
+                    base_url="http://localhost:11434",
+                    keep_alive=-1,  # 永久保持模型加载，避免每次请求重新加载
+                )
+            
+            else:
+                cls.llm_map[model] = ChatDeepSeek(
+                    model=model, 
+                    api_key="fake", 
+                    api_base=f"{compatible_url}/deepseek/{sub_url}/v1"
+                )
         return cls.llm_map[model]
 
 
@@ -137,11 +156,44 @@ class LangGraphAgent:
         }
         return list(tool_map.values())
     
-    async def get_skills_tools(self):
+    async def get_skills_context(self):
+        """Discover skills and route by frontmatter `type` field.
+
+        type: policy  → inject body into system prompt (messages[role=system])
+        type: capability (default) → register as tool
+        
+        """
+        import yaml as _yaml
         manager = SkillManager(project_skill_dir=Path(repo_root()) / mcp_model.get("skills_path", "skills"))
         await manager.adiscover()
-        skill_tools = create_langchain_tools(manager)
-        return skill_tools
+
+        policy_parts: list[str] = []
+        capability_names: set[str] = set()
+
+        for meta in manager.list_skills():
+            try:
+                raw = meta.skill_path.read_text(encoding="utf-8")
+                parts = raw.split("---", 2)
+                skill_type = "capability"
+                fm = {}
+                if len(parts) >= 2:
+                    fm = _yaml.safe_load(parts[1]) or {}
+                    skill_type = fm.get("type", "capability")
+                if skill_type == "policy":
+                    body = parts[2].strip() if len(parts) >= 3 else ""
+                    if body:
+                        policy_parts.append(body)
+                    logger.info(f"Skill '{meta.name}' routed to system prompt (type=policy)")
+                else:
+                    capability_names.add(meta.name)
+            except Exception as e:
+                logger.warning(f"Failed to parse skill frontmatter for '{meta.name}': {e}")
+                capability_names.add(meta.name)
+
+        all_tools = create_langchain_tools(manager)
+        skill_tools = [t for t in all_tools if t.name in capability_names]
+        policy_text = "\n\n".join(policy_parts)
+        return skill_tools, policy_text
     
     @classmethod
     async def _create_new_connection(cls):
@@ -233,16 +285,15 @@ class LangGraphAgent:
         # state.values is a dict, typically containing 'messages'
         messages = state.values.get("messages", [])
         serialized_messages = [self._serialize_langchain_object(item) for item in messages]
-        return [
-            self._normalize_reasoning_content(item) if isinstance(item, dict) else item
-            for item in serialized_messages
-        ]
+        return serialized_messages
 
 
     async def aget_agent_executor(self,system_prompt = default_system_prompt):
         cp = await self.aget_checkpointer()
-        skill_tools = await self.get_skills_tools()
+        skill_tools, policy_text = await self.get_skills_context()
         logger.info(f"Discovered {len(skill_tools)} skill tools: {[tool.name for tool in skill_tools]}")
+        if policy_text:
+            system_prompt = system_prompt + "\n\n" + policy_text
         tools = self.get_mcp_tools() + skill_tools
         
         # 手动创建 ToolNode 并开启错误处理
@@ -273,62 +324,7 @@ class LangGraphAgent:
             return obj
 
     def _normalize_reasoning_content(self, message):
-        """统一思考字段到 additional_kwargs.reasoning_content。"""
-        if message.get("type") != "ai":
-            return message
-
-        additional_kwargs = message.get("additional_kwargs")
-        if not isinstance(additional_kwargs, dict):
-            additional_kwargs = {}
-            message["additional_kwargs"] = additional_kwargs
-
-        content = message.get("content")
-
-        # 按需求：<think>...</think> 的字符串形式保持原样，不做改动
-        if isinstance(content, str):
-            return message
-
-        # Anthropic 等模型会返回结构化 thinking block，提取并统一到 reasoning_content
-        if isinstance(content, list):
-            reasoning_parts = []
-            text_parts = []
-            filtered_content = []
-            has_tool_use = False
-
-            for block in content:
-                if not isinstance(block, dict):
-                    filtered_content.append(block)
-                    continue
-
-                if block.get("type") == "thinking":
-                    thinking_text = block.get("thinking") or block.get("text")
-                    if isinstance(thinking_text, str) and thinking_text.strip():
-                        reasoning_parts.append(thinking_text.strip())
-                elif block.get("type") == "text":
-                    text = block.get("text")
-                    if isinstance(text, str):
-                        text_parts.append(text)
-                    filtered_content.append(block)
-                elif block.get("type") == "tool_use":
-                    has_tool_use = True
-                else:
-                    filtered_content.append(block)
-
-            if reasoning_parts:
-                existing_reasoning = additional_kwargs.get("reasoning_content")
-                joined_reasoning = "\n".join(reasoning_parts)
-                if isinstance(existing_reasoning, str) and existing_reasoning.strip():
-                    additional_kwargs["reasoning_content"] = existing_reasoning
-                else:
-                    additional_kwargs["reasoning_content"] = joined_reasoning
-
-            if text_parts:
-                message["content"] = "".join(text_parts)
-            elif has_tool_use:
-                message["content"] = "tool calling..."
-            else:
-                message["content"] = filtered_content
-
+        """No-op: keep raw model message format unchanged."""
         return message
 
     def _message_content(self, user_input, files):
@@ -358,7 +354,14 @@ class LangGraphAgent:
 
     async def astream_response(self, model, user_input, files=[],access_token = "") -> AsyncGenerator[str, None]:
         """流式返回 LangGraph 事件。"""
-        # model = "qwen3.5:27b" 
+        async for chunk in self._astream_response_inner(model, user_input, files, access_token):
+            yield chunk
+
+    async def _astream_response_inner(self, model, user_input, files=[], access_token="") -> AsyncGenerator[str, None]:
+        """实际的流式处理逻辑，由 astream_response 在持锁后调用。"""
+        # 立刻发送一个心跳，让前端知道连接已建立，避免因模型加载慢触发客户端超时重试
+        yield json.dumps({"event": "on_connected", "metadata": {"thread_id": self.topic_id}}, ensure_ascii=False)
+        model = "qwen3.5:27b" 
         # model = "qwen3.5:9b"
         #model = "mlx"
         #model = "MiniMax-M2.5-highspeed"
@@ -494,10 +497,7 @@ class LangGraphAgent:
 
         normalized_messages = []
         for message in messages:
-            if isinstance(message, dict):
-                normalized_messages.append(self._normalize_reasoning_content(message))
-            else:
-                normalized_messages.append(message)
+            normalized_messages.append(message)
 
         state["messages"] = normalized_messages
 

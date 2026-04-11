@@ -1,5 +1,5 @@
 ---
-name: get_system_api
+name: get-system-api
 description: 【环境上下文】本skills用来描述如何获取系统接口的Swagger标准文档
 metadata:
   required_skills:

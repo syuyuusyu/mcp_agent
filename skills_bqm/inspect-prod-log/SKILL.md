@@ -1,5 +1,5 @@
 ---
-name: inspect_prod_log
+name: inspect-prod-log
 description: 【环境上下文】提供生产环境日志文件系统结构说明。当涉及“检索日志”、“查看日志”或“排查问题”时，加载此信息以获取日志文件路径和分类知识。
 metadata:
   required_skills:
