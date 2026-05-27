@@ -35,22 +35,10 @@ pg = config.get("postgres", {})
 mcp_model = config.get("mcp_model", {})
 oss_config = config.get("oss",{})
 
-compatible_model_map = mcp_model.get("compatible_model_map", {})
+models = mcp_model.get("models", [])
 compatible_url = mcp_model.get("compatible_url")
 
 default_system_prompt = """
-Before planning a step-by-step solution using mcp tools (like list_tables, execute_sql), 
-ALWAYS check if a specialized Skill tool exists for the user's request.
-If a Skill matches the intent (e.g. data fixing, specific report), use the Skill directly instead of manually querying the database.
-
-When files are mentioned in the context:
-1. If a file has a URL: The file is accessible via network. However, you must first assess if you can process it based on:
-   - Your capabilities (e.g., do you support multimodal input for images/videos?)
-   - The file type (e.g., can you read Excel, PDF, etc.?)
-   If you cannot process it, inform the user that you lack the capability to handle that file type.
-   
-2. If a file has only a name (no URL): Select the appropriate mcp tool based on its file extension/type to access it.
-3. If there is no suitable mcp tool for the file type, inform the user that you cannot access that file.
 """
 
 class LangGraphAgent:
@@ -121,7 +109,7 @@ class LangGraphAgent:
     
     @classmethod
     def get_compatible_llm(cls, model:str):
-        sub_url = compatible_model_map.get(model)
+        sub_url = next((m.get("alias") for m in models if m.get("modelName") == model), None) if models else None
         if not cls.llm_map.get(model):
             if model == "qwen3.5:27b" or model == "qwen3.5:9b":
                 cls.llm_map[model] = ChatOllama(
@@ -137,7 +125,9 @@ class LangGraphAgent:
                     api_key="fake", 
                     api_base=f"{compatible_url}/deepseek/{sub_url}/v1"
                 )
-        return cls.llm_map[model]
+        kknd = cls.llm_map[model]
+        logger.info(f"Using LLM for model '{model}': {kknd.__class__.__name__}")
+        return kknd
 
 
 
@@ -179,7 +169,8 @@ class LangGraphAgent:
                 if len(parts) >= 2:
                     fm = _yaml.safe_load(parts[1]) or {}
                     skill_type = fm.get("type", "capability")
-                if skill_type == "policy":
+                    enabled = fm.get("enabled", True)
+                if skill_type == "policy" and enabled:
                     body = parts[2].strip() if len(parts) >= 3 else ""
                     if body:
                         policy_parts.append(body)
@@ -352,21 +343,21 @@ class LangGraphAgent:
             message_content = user_input
         return message_content
 
-    async def astream_response(self, model, user_input, files=[],access_token = "") -> AsyncGenerator[str, None]:
+    async def astream_response(self, model, user_input, files=[],access_token = "",topic_prompt= "") -> AsyncGenerator[str, None]:
         """流式返回 LangGraph 事件。"""
-        async for chunk in self._astream_response_inner(model, user_input, files, access_token):
+        async for chunk in self._astream_response_inner(model, user_input, files, access_token, topic_prompt):
             yield chunk
 
-    async def _astream_response_inner(self, model, user_input, files=[], access_token="") -> AsyncGenerator[str, None]:
+    async def _astream_response_inner(self, model, user_input, files=[], access_token="", topic_prompt="") -> AsyncGenerator[str, None]:
         """实际的流式处理逻辑，由 astream_response 在持锁后调用。"""
         # 立刻发送一个心跳，让前端知道连接已建立，避免因模型加载慢触发客户端超时重试
         yield json.dumps({"event": "on_connected", "metadata": {"thread_id": self.topic_id}}, ensure_ascii=False)
-        model = "qwen3.5:27b" 
+        #model = "qwen3.5:27b" 
         # model = "qwen3.5:9b"
         #model = "mlx"
         #model = "MiniMax-M2.5-highspeed"
         self.model = model
-        system_prompt = default_system_prompt + "\n\n"
+        system_prompt = default_system_prompt + "\n\n" + topic_prompt
         if access_token:
             system_prompt += f"\n\naccess_token: {access_token}\n (Note: access_token 用来调用其他的系统接口或者mcp方法,模型无需理解它的具体含义和格式,只需在需要时原样使用即可。请妥善保存)"
         agent_executor = await self.aget_agent_executor(system_prompt=system_prompt)

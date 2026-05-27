@@ -45,7 +45,6 @@ async def upload_file(file: UploadFile = File(...), s3_client = Provide[Containe
         name_root, ext = os.path.splitext(safe_name)
         mime_type, _ = mimetypes.guess_type(file.filename)
         logger.info(f"上传文件: original={original_name} safe_name={safe_name} mime_type={mime_type}")
-
         upload = s3_client.put_object(
             Bucket=oss_config.get("bucket_name"),
             Key="mcp_file/" + safe_name,

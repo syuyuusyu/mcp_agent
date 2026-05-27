@@ -4,16 +4,62 @@ mcp_model:
   url: https://dashscope.aliyuncs.com/compatible-mode/v1
   model: deepseek-v3.2
   skills_path: skills_bqm
-  compatible_url: http://www.51bqm.com:8086/stream
-  compatible_model_map:
-    deepseek-v3.2: from_ali_nothinking
-    deepseek-r1: from_ali
-    qwen-max-latest: from_ali
-    qwen3.5-plus: from_ali
-    qwen3-235b-a22b: from_ali
-    MiniMax-M2.5: from_ali
-    glm-5: from_ali
-    kimi-k2.5: from_ali
+  compatible_url: http://127.0.0.1:7001/stream
+  models:
+    - model: DeepSeekV3
+      thinking: true
+      search: false
+      type: DeepSeek
+      modelName: deepseek-v3.2
+      alias: from_ali_nothinking
+    - model: DeepSeekR1
+      thinking: true
+      search: false
+      type: DeepSeek
+      modelName: deepseek-r1
+      alias: from_ali
+    - model: QwenMax
+      thinking: true
+      search: false
+      type: Qwen
+      modelName: qwen-max-latest
+      alias: from_ali
+    - model: Qwen235bA22b
+      thinking: true
+      search: false
+      type: Qwen
+      modelName: qwen3-235b-a22b
+      alias: from_ali
+    - model: Qwen35
+      thinking: true
+      search: true
+      type: Qwen
+      modelName: qwen3.5-plus
+      alias: from_ali
+    - model: MiniMax-M2.5
+      thinking: true
+      search: false
+      type: MiniMax
+      modelName: MiniMax-M2.5
+      alias: from_minimaxi_for_openai
+    - model: glm-5
+      thinking: true
+      search: false
+      type: GLM
+      modelName: glm-5
+      alias: from_ali
+    - model: kimi-k2.5
+      thinking: true
+      search: false
+      type: Kimi
+      modelName: kimi-k2.5
+      alias: from_ali
+    - model: Elephant
+      thinking: true
+      search: false
+      type: OpenRouter
+      modelName: openrouter/elephant-alpha
+      alias: from_openrouter
 datasource:
   host: 49.4.55.222
   port: 3306

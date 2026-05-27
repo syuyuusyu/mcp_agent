@@ -3,7 +3,7 @@ mcp_model:
   api_key: sk-fadb6690a1144f16b9212266a4e2d666
   url: https://dashscope.aliyuncs.com/compatible-mode/v1
   model: deepseek-v3.2
-  skills_path: skills
+  skills_path: skills_syu
   compatible_url: https://www.ufoyy.top:7022/stream
   compatible_model_map:
     deepseek-v3.2: from_ali_nothinking

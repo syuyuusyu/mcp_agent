@@ -18,20 +18,23 @@ oss_config = config.get("oss",{})
 router = APIRouter()
 
 @router.post("/chat_stream")
-async def chat_stream(request: Request):
+@inject
+async def chat_stream(request: Request,db_client = Depends(Provide[Container.db_client])):
     data = await request.json()
     model = data.get("model")
     user_input = data.get("user_input")
     topic_id = data.get("topic_id", "default_topic")
     files = data.get("files", [])
     agent = LangGraphAgent(model=model, topic_id=topic_id)
+    topic_prompt_list = db_client.query(f"select prompt from ai_topic where id = '{topic_id}'")
+    topic_prompt = topic_prompt_list[0]['prompt'] if topic_prompt_list else ""
 
     access_token = request.headers.get("access_token", "")
     print(f"Received access_token: {access_token}")  # 调试输出，确认是否正确接收了 access_token
     
     # 转换为 SSE 格式的生成器
     async def sse_wrapper():
-        async for chunk in agent.astream_response(model, user_input, files,access_token):
+        async for chunk in agent.astream_response(model, user_input, files, access_token, topic_prompt):
             # logger.info(chunk)
             yield f"data: {chunk}\n\n"
         
@@ -110,3 +113,9 @@ async def upload_file(topicId: str, file: UploadFile = File(...), s3_client = De
     except Exception as e:
         logger.exception("文件上传失败")
         raise HTTPException(status_code=500, detail=f"上传失败: {e}")
+
+@router.get("/models/list")
+def list_models():
+    """返回可用模型列表"""
+    return config.get("mcp_model", {}).get("models", [])
+        
