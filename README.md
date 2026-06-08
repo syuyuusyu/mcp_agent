@@ -180,7 +180,7 @@ rsync -avz --delete \
 	--exclude "logs" \
 	--exclude "files" \
 	--exclude ".venv" \
-	./ syu@74.48.18.221:/home/syu/project/mcp_agent
+	./ syu@192.129.246.232:/home/syu/project/mcp_agent
 ```
 
 如果你只想同步 Docker 运行时外挂配置（对应 `-v <dir>:/app/config_ext`）：

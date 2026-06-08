@@ -3,8 +3,6 @@ from dependency_injector import containers, providers
 from .utils.db_client import DbClient
 from .utils.db_pool import DbConnectionPool
 from .utils.common import load_config_yaml
-from langchain_openai import ChatOpenAI
-
 config_file = load_config_yaml("config.yaml")
 
 class Container(containers.DeclarativeContainer):
@@ -25,13 +23,6 @@ class Container(containers.DeclarativeContainer):
     )
 
 
-    llm_client = providers.Singleton(
-        ChatOpenAI,
-        model=config.mcp_model.model,
-        api_key=config.mcp_model.api_key,
-        base_url=config.mcp_model.url,
-        #extra_body={"enable_thinking": False}  # 禁用思考模式
-    )
     s3_client = providers.Singleton(
         boto3.client,
         service_name='s3',

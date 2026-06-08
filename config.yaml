@@ -1,82 +1,36 @@
 log_dir: /Users/syu/project/ml/ai_chat/mcp_agent/logs
 mcp_model:
-  api_key: sk-fadb6690a1144f16b9212266a4e2d666
-  url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  model: deepseek-v3.2
-  skills_path: skills_bqm
-  compatible_url: http://127.0.0.1:7001/stream
+  skills_path: skills_chat
+  compatible_url: https://www.ufoyy.top:7022/stream
   models:
-    - model: DeepSeekV3
+    - model: DeepSeekV4Flash
       thinking: true
       search: false
       type: DeepSeek
-      modelName: deepseek-v3.2
-      alias: from_ali_nothinking
-    - model: DeepSeekR1
+      modelName: deepseek-v4-flash
+      alias: from_deepseek
+    - model: DeepSeekV4Pro
       thinking: true
       search: false
       type: DeepSeek
-      modelName: deepseek-r1
-      alias: from_ali
-    - model: QwenMax
-      thinking: true
-      search: false
-      type: Qwen
-      modelName: qwen-max-latest
-      alias: from_ali
-    - model: Qwen235bA22b
-      thinking: true
-      search: false
-      type: Qwen
-      modelName: qwen3-235b-a22b
-      alias: from_ali
-    - model: Qwen35
-      thinking: true
-      search: true
-      type: Qwen
-      modelName: qwen3.5-plus
-      alias: from_ali
-    - model: MiniMax-M2.5
-      thinking: true
-      search: false
-      type: MiniMax
-      modelName: MiniMax-M2.5
-      alias: from_minimaxi_for_openai
-    - model: glm-5
-      thinking: true
-      search: false
-      type: GLM
-      modelName: glm-5
-      alias: from_ali
-    - model: kimi-k2.5
-      thinking: true
-      search: false
-      type: Kimi
-      modelName: kimi-k2.5
-      alias: from_ali
-    - model: Elephant
-      thinking: true
-      search: false
-      type: OpenRouter
-      modelName: openrouter/elephant-alpha
-      alias: from_openrouter
+      modelName: deepseek-v4-pro
+      alias: from_deepseek
 datasource:
-  host: 49.4.55.222
+  host: 192.129.246.232
   port: 3306
-  user: bqm
-  password: '_s7hP@HG7(ZL!PEXaw'
-  database: bqm
+  user: root
+  password: 'LW56wii3g7qGf71ZCA'
+  database: app
 
 postgres:
-  host: 49.4.13.146
+  host: 192.129.246.232
   port: 5432
-  user: bqm
-  password: '_s7hP@HG7(ZL!PEXaw'
-  database: bqm
+  user: syu
+  password: 'LW56wii3g7qGf71ZCA'
+  database: app
 
 oss:
-  url: http://www.51bqm.com:9001
-  endpoint: http://www.51bqm.com:9000
-  access_key: admin
-  secret_key: n7d3t7x7
-  bucket_name: mcp
+  endpoint: https://www.ufoyy.top:9000
+  access-key: admin
+  secret-key: n7d3t7x7
+  bucket-name: mcp

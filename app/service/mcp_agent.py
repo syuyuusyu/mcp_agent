@@ -8,7 +8,16 @@ import asyncio
 from typing import List, Union
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import json
+try:
+    from warnings import deprecated
+except ImportError:
+    def deprecated(*args, **kwargs):
+        def decorator(func):
+            return func
 
+        return decorator
+
+@deprecated(reason="deprecated code, remain for reference, may be removed in future versions")
 class McpAgent:
     @staticmethod
     def topics():
